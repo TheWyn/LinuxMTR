@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.5
+Type=Application
+Name=LinMTR
+GenericName=Network Diagnostics
+Comment=WinMTR-style traceroute and ping network diagnostic tool
+Exec=linmtr
+Icon=linmtr
+Terminal=false
+Categories=Qt;Network;Monitor;
+Keywords=mtr;winmtr;traceroute;ping;network;diagnostics;

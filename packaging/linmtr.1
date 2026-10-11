@@ -1,0 +1,499 @@
+.\" Manual page for LinMTR.
+.\" SPDX-License-Identifier: GPL-2.0-only
+.\" Copyright (C) 2026 Wyn
+.TH LINMTR 1 2026-10-10 "LinMTR 0.1.0" "User Commands"
+.SH NAME
+linmtr \- WinMTR\-style traceroute and ping network diagnostic tool
+.SH SYNOPSIS
+.B linmtr
+.RI [ options ]
+.RI [ HOST ]
+.br
+.B linmtr \-\-report
+.RI [ options ]
+.I HOST
+.SH DESCRIPTION
+.B linmtr
+is a Linux port of WinMTR, written with Qt\ 6.
+It combines the functions of
+.BR traceroute (8)
+and
+.BR ping (8)
+in one tool, in the same way as
+.BR mtr (8).
+It sends probes with increasing TTL (hop limit) toward
+.I HOST
+continuously.
+For each router (hop) on the path, it shows packet loss, packets sent and
+received, and the best, average, worst and last round\-trip times.
+.PP
+.I HOST
+is a host name, an IPv4 address or an IPv6 address.
+.PP
+.B linmtr
+has two modes:
+.TP
+.B GUI mode
+This is the default.
+.B linmtr
+opens the main window.
+If you give
+.IR HOST ,
+.B linmtr
+puts it into the
+.B Host
+box and starts the trace immediately.
+.TP
+.B Report mode
+The
+.B \-\-report
+option selects this mode.
+.B linmtr
+opens no window and needs no display server.
+It sends the number of rounds that
+.B \-\-cycles
+sets and waits until each probe has a reply or its reply timeout expires.
+Then it writes a text report to standard output and exits.
+.PP
+Probing needs no root privileges and no file capabilities.
+Refer to
+.B UNPRIVILEGED PROBING
+below.
+.SH OPTIONS
+In GUI mode,
+.BR \-n ", " \-b ", " \-4 ", " \-6 ", " \-\-udp ", " \-\-tcp ", " \-P ", " \-s ", " \-i ", " \-\-timeout
+and
+.B \-m
+replace the saved
+.B Options
+values for this session only.
+.B linmtr
+does not save them unless you push
+.B OK
+in the
+.B Options
+dialog.
+Report mode does not use the saved values: options that you do not give
+have their default values.
+.TP
+.B \-\-report
+Use report mode: run without a GUI, trace for
+.B \-\-cycles
+rounds, write the text report to standard output, then exit.
+.I HOST
+is necessary in this mode.
+.TP
+.BI "\-c, \-\-cycles " N
+Number of probe rounds in report mode, from 1 to 1000000.
+One round sends one probe to each hop, so a hop that gets a probe in every
+round shows
+.I N
+in the
+.B Sent
+column.
+The default is 10.
+.TP
+.B "\-n, \-\-no\-dns"
+Do not resolve hop addresses to host names (reverse DNS).
+Show IP addresses only.
+.TP
+.B "\-b, \-\-show\-ips"
+Show the IP address after the host name of each hop, for example
+.RB \(lq "one.one.one.one (1.1.1.1)" \(rq,
+as
+.B mtr \-b
+does.
+This applies only to hops with a resolved name.
+In report mode, this is off unless you give
+.BR \-b .
+In GUI mode, the saved
+.B Show IP next to hostname
+option applies (it is on by default), and
+.B \-b
+sets it on for this session.
+.TP
+.B \-4
+Use IPv4 only.
+.I HOST
+must resolve to an IPv4 address.
+.TP
+.B \-6
+Use IPv6 only.
+.I HOST
+must resolve to an IPv6 address.
+.TP
+.B \-\-udp
+Send UDP datagrams instead of ICMP echo requests.
+You cannot use this option together with
+.BR \-\-tcp .
+Refer to
+.B UNPRIVILEGED PROBING
+below.
+.TP
+.B \-\-tcp
+Send TCP connection requests instead of ICMP echo requests, as
+.B mtr \-\-tcp
+does.
+TCP probes can get through firewalls that drop ICMP or UDP traffic.
+You cannot use this option together with
+.BR \-\-udp .
+Refer to
+.B UNPRIVILEGED PROBING
+below.
+.TP
+.BI "\-P, \-\-port " n
+Destination port of TCP probes, from 1 to 65535.
+The default is 80.
+Only TCP probes use the port: with
+.BR \-\-tcp ,
+or in GUI mode when the saved
+.B Protocol
+is TCP.
+.TP
+.BI "\-s, \-\-size " bytes
+Payload size of each probe, in bytes.
+The default is 64.
+UDP probes always carry a minimum of 8 bytes.
+TCP probes carry no payload, so this option has no effect on them.
+.TP
+.BI "\-i, \-\-interval " seconds
+Time between the start of two probe rounds, in seconds.
+You can give fractions.
+The default is 1.0.
+.TP
+.BI \-\-timeout " seconds"
+Time to wait for the reply to a probe, in seconds.
+A probe without a reply in this time counts as lost.
+The default is 3.0.
+.TP
+.BI "\-m, \-\-max\-hops " N
+Maximum TTL (number of hops) to probe.
+The default is 30.
+.TP
+.B "\-v, \-\-version"
+Show the version and exit.
+.TP
+.B "\-h, \-\-help"
+Show a summary of the options and exit.
+.TP
+.B \-\-help\-all
+Show the summary, including the generic Qt options, and exit.
+.SH STATISTICS
+Each hop is one row, with these columns:
+.TP
+.B Hostname
+The host name of the router that replied (when name resolution is on),
+else its IP address.
+If the router sent an ICMP error (for example
+.RB \(lq "Destination host unreachable." \(rq),
+the row shows the error text instead.
+A hop that never replied shows
+.RB \(lq "No response from host" \(rq.
+With
+.B \-b
+(report mode) or
+.B Show IP next to hostname
+(GUI), the IP address in parentheses follows a resolved name.
+.TP
+.B Nr
+The hop number (TTL).
+.TP
+.B Loss %
+Percentage of lost probes, as an integer.
+Probes that still wait for a reply do not count.
+.TP
+.BR Sent ", " Recv
+Number of probes sent to the hop and number of replies received.
+.TP
+.BR Best ", " Avrg ", " Worst ", " Last
+Round\-trip times in milliseconds, shown as integers.
+.PP
+When the target replies, the table shows no rows after the target.
+.PP
+Report mode and the
+.B Copy Text to clipboard
+and
+.B Export TEXT
+buttons make the text report.
+The
+.B Copy HTML to clipboard
+and
+.B Export HTML
+buttons make the HTML report.
+Both reports use the WinMTR report layout.
+The report title is
+.RB \(lq "LinMTR statistics" \(rq
+and lines end with a line feed.
+The reports show each host as the
+.B Hostname
+column does.
+In the text report, a host text longer than 40 characters stays complete
+and moves the rest of its row to the right.
+.SH GUI
+Type a host into the
+.B Host
+box and push
+.B Start
+(or press Enter).
+The table updates while the trace runs.
+.B Stop
+ends the trace.
+The copy and export buttons also work while a trace runs.
+.PP
+The
+.B Host
+box keeps a list of recent hosts, the newest first.
+A host goes into the list when its trace starts, that is, after its name
+resolved.
+A host name that does not resolve stays out of the list.
+.PP
+The last entry of the list is always
+.BR "Clear History" .
+Select it to delete the list, without confirmation.
+The text
+.B Clear History
+(in any case) in the
+.B Host
+box also deletes the list when you push
+.B Start
+or press Enter.
+Then
+.B linmtr
+starts no trace.
+.B linmtr
+always traces a
+.I HOST
+from the command line, also when it is
+.BR "Clear History" .
+.PP
+Double\-click a row to open the
+.B Host properties
+dialog for that hop.
+.PP
+To copy one hop, select its row and press
+.BR Ctrl+C .
+This copies the text of the
+.B Hostname
+column.
+Right\-click a row for a menu with
+.B Copy hostname
+(the same text) and
+.BR "Copy IP address" .
+.B Copy IP address
+is not available for a hop that has no address.
+Ctrl+C copies a hop only while the table has the keyboard focus.
+In the
+.B Host
+box, Ctrl+C copies the selected text as usual.
+.PP
+The
+.B Options
+dialog sets the values for traces started from the window:
+.BR "Interval (sec)" ,
+.BR "Ping size (bytes)" ,
+.BR "Max. hosts in LRU list" ,
+.B Resolve names
+and
+.B Show IP next to hostname
+(on by default).
+Its
+.B Probing
+group has
+.BR Protocol " (ICMP, UDP or TCP),"
+.B TCP port
+(1 to 65535, default 80, available only for TCP),
+.BR "IP version" " (Auto, IPv4 or IPv6),"
+.B Reply timeout (sec)
+and
+.BR "Max hops" .
+New values apply to the next trace.
+.B Resolve names
+and
+.B Show IP next to hostname
+are exceptions: they apply immediately to the table and to the reports.
+.SH UNPRIVILEGED PROBING
+By default,
+.B linmtr
+sends ICMP echo requests through unprivileged ICMP datagram sockets
+("ping sockets", see
+.BR icmp (7)).
+The kernel permits these sockets only for users whose group ID is in the
+range that the
+.B net.ipv4.ping_group_range
+sysctl sets.
+This sysctl also controls ICMPv6 ping sockets.
+On systemd\-based distributions such as Arch Linux, the range includes all
+groups by default
+.RB ( "0 2147483647" ).
+To examine the value, use:
+.PP
+.RS
+.EX
+sysctl net.ipv4.ping_group_range
+.EE
+.RE
+.PP
+If
+.B linmtr
+cannot open an ICMP socket, it changes to UDP probes automatically and shows a
+message.
+The
+.B \-\-udp
+option and the
+.B Protocol
+option select UDP probes directly.
+.PP
+UDP probes use the method of
+.BR tracepath (8).
+The socket has the
+.B IP_RECVERR
+option set (see
+.BR ip (7)),
+and the kernel puts the ICMP replies from routers into its error queue.
+The probe for TTL
+.I n
+goes to destination port 33434\ +\ (\fIn\fP\ \-\ 1).
+The trace has reached the target when the target replies with ICMP
+.RI \(lq "port unreachable" \(rq.
+A firewall that drops these UDP datagrams or the ICMP replies can prevent
+detection of the target.
+.PP
+TCP probes
+.RB ( \-\-tcp ,
+or TCP in the
+.B Protocol
+option) use the connect method of
+.BR "mtr \-\-tcp" .
+Each probe is a non\-blocking
+.BR connect (2)
+call on its own TCP socket, to the
+.B \-\-port
+of the target (default 80).
+The socket has the TTL set and
+.B IP_RECVERR
+on.
+Routers on the path reply with ICMP
+.RI \(lq "time exceeded" \(rq,
+which the kernel puts into the socket error queue.
+The trace has reached the target when the target accepts the connection or
+refuses it with a TCP reset.
+.PP
+As with UDP probes, an ICMP
+.RI \(lq "port unreachable" \(rq
+also means that the trace has reached the target.
+A firewall at the target or in front of it rejected the connection request.
+The hop then shows the address that sent the ICMP message.
+Other
+.RI \(lq "destination unreachable" \(rq
+messages show as an error on the hop.
+.B linmtr
+closes each socket when its probe has a result or times out.
+.PP
+When a connection request has no answer after about 1 second, the kernel
+sends it again.
+An answer that arrives after this resend counts as lost, because
+.B linmtr
+cannot know which of the two requests it answers (Karn's rule).
+Thus in TCP mode, a reply that is slower than about 1 second shows as loss.
+.PP
+Each probe is a new connection with a new source port.
+Thus routers that balance traffic over parallel paths by flow (ECMP) can send
+the probes for one TTL along different paths.
+A hop can then move to a different row from round to round.
+The target row can show fewer probes sent than rounds.
+.B "mtr \-\-tcp"
+has the same limitation.
+An ordinary TCP socket needs no privileges.
+A firewall that drops the connection requests to the port silently can prevent
+detection of the target.
+.SH EXIT STATUS
+In report mode:
+.TP
+.B 0
+Success.
+.TP
+.B 1
+.B linmtr
+could not resolve the host name, open a socket, or send a probe.
+It writes a message to standard error.
+.TP
+.B 2
+The command line arguments are not valid.
+For example, a value is out of range, or the arguments contain both
+.B \-4
+and
+.BR \-6 ,
+or both
+.B \-\-udp
+and
+.BR \-\-tcp .
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/LinMTR/LinMTR.conf
+GUI settings: the
+.B Options
+dialog values, the window geometry and the list of recent hosts.
+If
+.B XDG_CONFIG_HOME
+is not set, the file is
+.IR ~/.config/LinMTR/LinMTR.conf .
+.SH EXAMPLES
+Open the main window and trace a host immediately:
+.PP
+.RS
+.EX
+linmtr example.com
+.EE
+.RE
+.PP
+Write a report of 20 rounds, without reverse DNS:
+.PP
+.RS
+.EX
+linmtr \-\-report \-c 20 \-n example.com
+.EE
+.RE
+.PP
+Write an IPv6 report with UDP probes to a file:
+.PP
+.RS
+.EX
+linmtr \-\-report \-6 \-\-udp example.com > report.txt
+.EE
+.RE
+.PP
+Write a report with TCP probes to port 443, with the IP address after each
+host name:
+.PP
+.RS
+.EX
+linmtr \-\-report \-\-tcp \-P 443 \-b example.com
+.EE
+.RE
+.SH SEE ALSO
+.BR mtr (8),
+.BR tracepath (8),
+.BR traceroute (8),
+.BR ping (8),
+.BR connect (2),
+.BR icmp (7),
+.BR ip (7),
+.BR tcp (7),
+.BR sysctl (8)
+.SH AUTHORS
+Wyn.
+LinMTR is a port of WinMTR
+.RI ( https://github.com/WinMTR/WinMTR\-Official ).
+Vasile Laurentiu Stanimir started WinMTR in 2000, and Appnor MSP released it
+under the GNU GPL version 2.
+WinMTR is a clone of mtr by Matt Kimball and Roger Wolff.
+.SH COPYRIGHT
+Copyright (C) 2026 Wyn.
+.PP
+LinMTR is free software; you can redistribute it and/or modify it under the
+terms of the GNU General Public License version 2 as published by the Free
+Software Foundation (GPL\-2.0\-only).
+WinMTR grants the GPL version 2 without the \(lqany later version\(rq option,
+and LinMTR reproduces its user\-visible strings and report formats,
+so LinMTR is distributed under the same terms.
+There is NO WARRANTY, to the extent permitted by law.

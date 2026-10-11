@@ -1,0 +1,49 @@
+# Maintainer: Wyn
+#
+# Builds and packages the local LinMTR source tree (the checkout that contains
+# this file). Usage:
+#
+#   cd packaging/arch && makepkg -si
+#
+# This PKGBUILD is in packaging/arch/, so that the makepkg work directories
+# src/ and pkg/ cannot collide with the project src/ directory. Also,
+# `makepkg -C` (clean) cannot delete project sources.
+#
+# The sources are outside the makepkg source array. Thus namcap reports
+# "file-referred-in-startdir" for the cmake -S line, and clean-chroot builds
+# (makechrootpkg, pkgctl build) cannot see the tree.
+#
+# When a public repository exists, replace the local-tree build with a source=()
+# array and point cmake -S at the extracted directory. A -git variant also needs
+# provides=(linmtr) and conflicts=(linmtr).
+
+pkgname=linmtr
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Qt 6 port of WinMTR: graphical traceroute and ping network diagnostic tool'
+arch=(x86_64)
+url='https://github.com/TheWyn/LinuxMTR'
+# Upstream WinMTR grants "GPL V2" without "or any later version", and LinMTR
+# reproduces its strings and report formats: version 2 only.
+license=(GPL-2.0-only)
+# Use libgcc and libstdc++, not the gcc-libs meta package, which now also
+# pulls in unrelated runtimes (qt6-base declares them the same way).
+# hicolor-icon-theme owns the icon directory tree that the icon goes into.
+depends=(qt6-base glibc libgcc libstdc++ hicolor-icon-theme)
+makedepends=(cmake)
+
+build() {
+  # The source tree root is two levels above packaging/arch/.
+  cmake -S "$startdir/../.." -B "$srcdir/build" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build "$srcdir/build"
+}
+
+check() {
+  ctest --test-dir "$srcdir/build" --output-on-failure
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install "$srcdir/build"
+}
