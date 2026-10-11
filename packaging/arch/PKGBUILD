@@ -1,22 +1,4 @@
-# Maintainer: Wyn
-#
-# Builds and packages the local LinMTR source tree (the checkout that contains
-# this file). Usage:
-#
-#   cd packaging/arch && makepkg -si
-#
-# This PKGBUILD is in packaging/arch/, so that the makepkg work directories
-# src/ and pkg/ cannot collide with the project src/ directory. Also,
-# `makepkg -C` (clean) cannot delete project sources.
-#
-# The sources are outside the makepkg source array. Thus namcap reports
-# "file-referred-in-startdir" for the cmake -S line, and clean-chroot builds
-# (makechrootpkg, pkgctl build) cannot see the tree.
-#
-# This file builds the local tree on purpose. For a release package, tag a
-# version and add a source=() array for the tag archive. Then point cmake -S at
-# the extracted directory. A -git variant also needs provides=(linmtr) and
-# conflicts=(linmtr).
+# Maintainer: Wyn <TheWyn@users.noreply.github.com>
 
 pkgname=linmtr
 pkgver=0.1.0
@@ -32,19 +14,20 @@ license=(GPL-2.0-only)
 # hicolor-icon-theme owns the icon directory tree that the icon goes into.
 depends=(qt6-base glibc libgcc libstdc++ hicolor-icon-theme)
 makedepends=(cmake)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('70fe4ccc5ccb48a2a246098c5b3ce33a1819e4422512eb840db9d6d72e97943e')
 
 build() {
-  # The source tree root is two levels above packaging/arch/.
-  cmake -S "$startdir/../.." -B "$srcdir/build" \
+  cmake -S "LinuxMTR-$pkgver" -B build \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr
-  cmake --build "$srcdir/build"
+  cmake --build build
 }
 
 check() {
-  ctest --test-dir "$srcdir/build" --output-on-failure
+  ctest --test-dir build --output-on-failure
 }
 
 package() {
-  DESTDIR="$pkgdir" cmake --install "$srcdir/build"
+  DESTDIR="$pkgdir" cmake --install build
 }

@@ -140,8 +140,10 @@ This installs the `linmtr` binary, the desktop entry, the icon and the man page.
 
 ## Installing on Arch Linux (PKGBUILD)
 
-The PKGBUILD in `packaging/arch/` builds and packages **this local checkout**. It
-downloads nothing.
+The PKGBUILD in `packaging/arch/` downloads the tagged release archive from GitHub,
+builds it, runs the tests and packages the result. The `linmtr-git` PKGBUILD in
+`packaging/arch/linmtr-git/` builds the latest `main` commit instead; it provides and
+conflicts with `linmtr`.
 
 ```sh
 cd packaging/arch && makepkg -si
@@ -159,13 +161,8 @@ The package installs:
 To remove it: `sudo pacman -R linmtr`. To delete the makepkg work directories in
 `packaging/arch/`, use `makepkg -c` or `makepkg -C`.
 
-Notes:
-
-- `namcap PKGBUILD` reports `file-referred-in-startdir`. This is normal, because the
-  PKGBUILD reads the sources from the checkout and not from a `source=()` array. For the
-  same reason, clean-chroot builds (`makechrootpkg`, `pkgctl build`) do not work.
-- The package depends on `qt6-base`, `glibc`, `libgcc`, `libstdc++` and
-  `hicolor-icon-theme` (which owns the icon directories).
+The package depends on `qt6-base`, `glibc`, `libgcc`, `libstdc++` and
+`hicolor-icon-theme` (which owns the icon directories).
 
 ## Usage
 

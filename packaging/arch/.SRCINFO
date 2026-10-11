@@ -1,0 +1,17 @@
+pkgbase = linmtr
+	pkgdesc = Qt 6 port of WinMTR: graphical traceroute and ping network diagnostic tool
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/TheWyn/LinuxMTR
+	arch = x86_64
+	license = GPL-2.0-only
+	makedepends = cmake
+	depends = qt6-base
+	depends = glibc
+	depends = libgcc
+	depends = libstdc++
+	depends = hicolor-icon-theme
+	source = linmtr-0.1.0.tar.gz::https://github.com/TheWyn/LinuxMTR/archive/refs/tags/v0.1.0.tar.gz
+	sha256sums = 70fe4ccc5ccb48a2a246098c5b3ce33a1819e4422512eb840db9d6d72e97943e
+
+pkgname = linmtr

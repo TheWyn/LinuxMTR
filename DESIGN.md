@@ -159,8 +159,11 @@ follows, without a newline. The HTML report keeps the upstream tags (`<center><h
 
 ## 7. Packaging and conventions
 
-- The PKGBUILD builds the local tree and downloads nothing. Its `depends` is the set that
+- The PKGBUILD downloads the `v$pkgver` tag archive from GitHub (`source=()` with a sha256
+  checksum), so the AUR and clean-chroot builds work. Its `depends` is the set that
   `namcap` computes (`libgcc` and `libstdc++` as qt6-base declares them).
+  `packaging/arch/linmtr-git/` is the VCS variant: it builds `main` and provides and
+  conflicts with `linmtr`.
 - Qt style, `m_` members, one class per file pair, clean under `-Wall -Wextra`. No blocking
   system calls on the GUI thread. Every fd is `SOCK_NONBLOCK | SOCK_CLOEXEC` and closes in
   exactly one place. `CMakeLists.txt` globs `src/**/*.{cpp,h}`: new files need no CMake edit.

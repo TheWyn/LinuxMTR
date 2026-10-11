@@ -1,0 +1,40 @@
+# Maintainer: Wyn <TheWyn@users.noreply.github.com>
+
+pkgname=linmtr-git
+pkgver=0.1.0.r0.g0678b48
+pkgrel=1
+pkgdesc='Qt 6 port of WinMTR: graphical traceroute and ping network diagnostic tool (git version)'
+arch=(x86_64)
+url='https://github.com/TheWyn/LinuxMTR'
+# Upstream WinMTR grants "GPL V2" without "or any later version", and LinMTR
+# reproduces its strings and report formats: version 2 only.
+license=(GPL-2.0-only)
+# Use libgcc and libstdc++, not the gcc-libs meta package, which now also
+# pulls in unrelated runtimes (qt6-base declares them the same way).
+# hicolor-icon-theme owns the icon directory tree that the icon goes into.
+depends=(qt6-base glibc libgcc libstdc++ hicolor-icon-theme)
+makedepends=(cmake git)
+provides=(linmtr)
+conflicts=(linmtr)
+source=("git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  # Tag v0.1.0 plus 3 commits becomes 0.1.0.r3.g<short hash>.
+  git -C LinuxMTR describe --long --abbrev=7 --tags | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+build() {
+  cmake -S LinuxMTR -B build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build build
+}
+
+check() {
+  ctest --test-dir build --output-on-failure
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}
