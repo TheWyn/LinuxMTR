@@ -1,7 +1,7 @@
 # Maintainer: Wyn <TheWyn@users.noreply.github.com>
 
 pkgname=linmtr-git
-pkgver=0.1.0.r0.g0678b48
+pkgver=0.1.0.r1.g1e9c869
 pkgrel=1
 pkgdesc='Qt 6 port of WinMTR: graphical traceroute and ping network diagnostic tool (git version)'
 arch=(x86_64)
