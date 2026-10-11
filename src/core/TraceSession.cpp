@@ -3,6 +3,7 @@
 
 #include "TraceSession.h"
 
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QHostInfo>
@@ -70,6 +71,7 @@ struct TraceSession::Private
         int round = 0;
         int slot = 0;          // prober socket that sent the probe
         qint64 sentAtNs = 0;
+        qint64 sentAtMs = 0;   // wall clock, for HopSample
     };
 
     struct Round
@@ -485,7 +487,7 @@ void TraceSession::Private::onProbeEvent(const ProbeEvent &ev)
             hop.worstMs = std::max(hop.worstMs, rtt);
         }
         hop.totalMs += rtt;
-        hop.addSample(it->round, static_cast<float>(rtt));
+        hop.addSample(it->round, static_cast<float>(rtt), it->sentAtMs);
         hop.errorText.clear();
         updateHopAddress(hop, ev.responder, ev.reachedTarget);
         break;
@@ -493,13 +495,13 @@ void TraceSession::Private::onProbeEvent(const ProbeEvent &ev)
     case ProbeEvent::Kind::Error:
         // WinMTR: an ICMP error names the hop but is not a reply (counts as loss).
         ++hop.timedOut;
-        hop.addSample(it->round, -1.0f);
+        hop.addSample(it->round, -1.0f, it->sentAtMs);
         hop.errorText = ev.errorText;
         updateHopAddress(hop, ev.responder, false);
         break;
     case ProbeEvent::Kind::Lost:
         ++hop.timedOut;
-        hop.addSample(it->round, -1.0f);
+        hop.addSample(it->round, -1.0f, it->sentAtMs);
         break;
     }
     releasePending(it);
@@ -604,17 +606,18 @@ void TraceSession::Private::sendProbe(int ttl)
 
     const quint16 seq = allocateSeq();
     const qint64 sentAt = clock.nsecsElapsed();
+    const qint64 sentAtMs = QDateTime::currentMSecsSinceEpoch();
     const int err = prober->send(ttl, seq, slot);
     ++hop.sent;
     if (err == 0) {
-        pending.insert(seq, Pending{ttl, currentRound, slot, sentAt});
+        pending.insert(seq, Pending{ttl, currentRound, slot, sentAt, sentAtMs});
         if (slotInFlight != nullptr)
             ++*slotInFlight;
         ++round.outstanding;
         ++round.sendOk;
     } else {
         ++hop.timedOut;
-        hop.addSample(currentRound, -1.0f);
+        hop.addSample(currentRound, -1.0f, sentAtMs);
         ++round.sendFailed;
         lastSendErrno = err;
         if (!reportedErrnos.contains(err)) {
@@ -655,7 +658,7 @@ void TraceSession::Private::sweepTimeouts(qint64 now)
         if (ttl >= 1 && ttl <= static_cast<int>(hopStats.size())) {
             HopStats &hop = hopStats[static_cast<std::size_t>(ttl - 1)];
             ++hop.timedOut;
-            hop.addSample(it->round, -1.0f);
+            hop.addSample(it->round, -1.0f, it->sentAtMs);
         }
         if (prober)
             prober->discard(it.key());   // TCP: closes the probe's socket

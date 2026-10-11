@@ -5,11 +5,12 @@
 #include <QString>
 
 // One probe result of a hop, for the latency graphs. ms < 0 means no reply
-// (timed out, or an ICMP error).
+// (timed out, an ICMP error or a failed send).
 struct HopSample
 {
     int round = 0;
     float ms = -1.0f;
+    qint64 sentAtMs = 0;   // send time of the probe, ms since the Unix epoch
 };
 
 // One row of the trace table. All times are milliseconds.
@@ -35,12 +36,12 @@ struct HopStats
 
     // Records one probe result. Results can resolve out of round order (a
     // timeout resolves after a later reply), so the insert keeps the order.
-    void addSample(int round, float ms)
+    void addSample(int round, float ms, qint64 sentAtMs)
     {
         qsizetype i = history.size();
         while (i > 0 && history[i - 1].round > round)
             --i;
-        history.insert(i, HopSample{round, ms});
+        history.insert(i, HopSample{round, ms, sentAtMs});
         if (history.size() > kHistoryRounds)
             history.removeFirst();
     }

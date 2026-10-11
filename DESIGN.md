@@ -37,7 +37,8 @@ Signals: `stateChanged`, `hopsChanged` (coalesced, §3.3), `roundCompleted(int)`
 `errorOccurred(QString)` (fatal; back to `Idle`) and `infoMessage(QString)` (non-fatal).
 `HopStats::history` holds the newest `kHistoryRounds` (3600) probe results of the hop in
 ascending round order, for the graphs (§4). The reports do not use it. Each `HopSample` has
-the round number and the RTT in ms; a negative RTT means no reply.
+the round number, the RTT in ms (a negative RTT means no reply) and the send time of the
+probe in ms since the Unix epoch.
 
 ## 3. Engine (`src/core/`)
 
@@ -85,8 +86,9 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   seq space does not fill. At the cap, the session skips probes and emits one capacity
   `infoMessage` per trace, as for the TCP cap. An entry older than
   `timeoutSec` leaves the table and adds `timedOut++` to its hop.
-- Every resolved probe adds one `HopSample` to its hop: the round and the RTT, or a negative
-  value for no reply. This includes ICMP errors, local errors, timeouts and failed sends.
+- Every resolved probe adds one `HopSample` to its hop: the round, the RTT or a negative
+  value for no reply, and the wall-clock send time (`QDateTime::currentMSecsSinceEpoch()`).
+  This includes ICMP errors, local errors, timeouts and failed sends.
   `HopStats::addSample()` keeps the newest `kHistoryRounds` samples in round order, also when
   a timeout resolves after a reply of a later round.
 - `roundCompleted(n)` fires when every probe of round n has an answer or timed out. With

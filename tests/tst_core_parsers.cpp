@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Copyright (C) 2026 Wyn
 
+#include <QDateTime>
 #include <QSignalSpy>
 #include <QtTest>
 
@@ -454,17 +455,19 @@ void TestCoreParsers::classify()
 void TestCoreParsers::hopSampleOrderAndCap()
 {
     HopStats hop;
-    hop.addSample(1, 1.5f);
-    hop.addSample(3, 3.5f);
-    hop.addSample(2, -1.0f);
+    hop.addSample(1, 1.5f, 1000);
+    hop.addSample(3, 3.5f, 3000);
+    hop.addSample(2, -1.0f, 2000);
     QCOMPARE(hop.history.size(), qsizetype(3));
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 3; ++i) {
         QCOMPARE(hop.history.at(i).round, i + 1);
+        QCOMPARE(hop.history.at(i).sentAtMs, qint64(1000) * (i + 1));
+    }
     QVERIFY(hop.history.at(1).ms < 0.0f);
 
     HopStats full;
     for (int r = 1; r <= HopStats::kHistoryRounds + 5; ++r)
-        full.addSample(r, static_cast<float>(r));
+        full.addSample(r, static_cast<float>(r), r);
     QCOMPARE(full.history.size(), qsizetype(HopStats::kHistoryRounds));
     QCOMPARE(full.history.constFirst().round, 6);
     QCOMPARE(full.history.constLast().round, HopStats::kHistoryRounds + 5);
@@ -483,8 +486,10 @@ void TestCoreParsers::liveLoopbackTrace()
 
     TraceSession session;
     QSignalSpy errors(&session, &TraceSession::errorOccurred);
+    const qint64 before = QDateTime::currentMSecsSinceEpoch();
     session.start(QStringLiteral("127.0.0.1"), options);
     QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= 3 || !errors.isEmpty(), 15000);
+    const qint64 after = QDateTime::currentMSecsSinceEpoch();
     QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
 
     QCOMPARE(session.roundsCompleted(), 3);
@@ -501,6 +506,7 @@ void TestCoreParsers::liveLoopbackTrace()
     QCOMPARE(quint64(hop.history.size()), hop.received + hop.timedOut);
     for (int i = 0; i < hop.history.size(); ++i) {
         QCOMPARE(hop.history.at(i).round, i + 1);
+        QVERIFY(hop.history.at(i).sentAtMs >= before && hop.history.at(i).sentAtMs <= after);
         if (hop.received == 3)
             QVERIFY(hop.history.at(i).ms >= 0.0f);
     }
