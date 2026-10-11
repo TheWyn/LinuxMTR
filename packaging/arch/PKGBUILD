@@ -13,9 +13,10 @@
 # "file-referred-in-startdir" for the cmake -S line, and clean-chroot builds
 # (makechrootpkg, pkgctl build) cannot see the tree.
 #
-# When a public repository exists, replace the local-tree build with a source=()
-# array and point cmake -S at the extracted directory. A -git variant also needs
-# provides=(linmtr) and conflicts=(linmtr).
+# This file builds the local tree on purpose. For a release package, tag a
+# version and add a source=() array for the tag archive. Then point cmake -S at
+# the extracted directory. A -git variant also needs provides=(linmtr) and
+# conflicts=(linmtr).
 
 pkgname=linmtr
 pkgver=0.1.0
