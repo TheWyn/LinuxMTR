@@ -34,6 +34,9 @@ while active calls `stop()` first). `stop()` is a synchronous teardown to `Idle`
 snapshot of the probed hops in TTL order, trimmed by the upstream `GetMax()` rule (§3.3).
 Signals: `stateChanged`, `hopsChanged` (coalesced, §3.3), `roundCompleted(int)`,
 `errorOccurred(QString)` (fatal; back to `Idle`) and `infoMessage(QString)` (non-fatal).
+`HopStats::history` holds the newest `kHistoryRounds` (3600) probe results of the hop in
+ascending round order, for the graphs (§4). The reports do not use it. Each `HopSample` has
+the round number and the RTT in ms; a negative RTT means no reply.
 
 ## 3. Engine (`src/core/`)
 

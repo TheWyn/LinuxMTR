@@ -1,7 +1,16 @@
 #pragma once
 
 #include <QHostAddress>
+#include <QList>
 #include <QString>
+
+// One probe result of a hop, for the latency graphs. ms < 0 means no reply
+// (timed out, or an ICMP error).
+struct HopSample
+{
+    int round = 0;
+    float ms = -1.0f;
+};
 
 // One row of the trace table. All times are milliseconds.
 struct HopStats
@@ -18,6 +27,23 @@ struct HopStats
     double worstMs = 0.0;
     double totalMs = 0.0;        // sum of reply RTTs, for the average
     bool isTarget = false;       // the trace reached the target at this hop
+
+    // The newest kHistoryRounds probe results in ascending round order. A round
+    // in which the hop got no probe has no entry. Reports do not use it.
+    static constexpr int kHistoryRounds = 3600;
+    QList<HopSample> history;
+
+    // Records one probe result. Results can resolve out of round order (a
+    // timeout resolves after a later reply), so the insert keeps the order.
+    void addSample(int round, float ms)
+    {
+        qsizetype i = history.size();
+        while (i > 0 && history[i - 1].round > round)
+            --i;
+        history.insert(i, HopSample{round, ms});
+        if (history.size() > kHistoryRounds)
+            history.removeFirst();
+    }
 
     // WinMTR integer formula (100 - 100*recv/sent) over resolved probes only
     // (received + timedOut), so that a probe in flight never shows as loss.
