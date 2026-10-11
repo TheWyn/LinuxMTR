@@ -54,9 +54,12 @@ bool needsCoreApplication(int argc, char **argv, bool *reportMode, bool *helpAll
         const char *arg = argv[i];
         if (std::strcmp(arg, "--") == 0)
             break;
-        // "--report=VALUE" is a parse error. It also selects QCoreApplication, so
-        // that the parser reports it with status 2 on a host without a display.
-        if (std::strcmp(arg, "--report") == 0 || std::strncmp(arg, "--report=", 9) == 0) {
+        // --html and --json imply --report. "--report=VALUE" (and the same form
+        // of the other two) is a parse error. It also selects QCoreApplication,
+        // so that the parser reports it with status 2 on a host without a display.
+        if (std::strcmp(arg, "--report") == 0 || std::strncmp(arg, "--report=", 9) == 0
+            || std::strcmp(arg, "--html") == 0 || std::strncmp(arg, "--html=", 7) == 0
+            || std::strcmp(arg, "--json") == 0 || std::strncmp(arg, "--json=", 7) == 0) {
             *reportMode = true;
             core = true;
         } else if (std::strcmp(arg, "--help-all") == 0) {
@@ -206,8 +209,15 @@ int main(int argc, char *argv[])
 
     const QCommandLineOption reportOption(
         QStringLiteral("report"),
-        QStringLiteral("Headless report mode: no GUI, run --cycles rounds, print the text "
-                       "report to stdout and exit."));
+        QStringLiteral("Headless report mode: no GUI, run --cycles rounds, print the report "
+                       "(text by default) to stdout and exit."));
+    const QCommandLineOption htmlOption(
+        QStringLiteral("html"),
+        QStringLiteral("Report mode with the HTML report (as Export HTML) instead of the text "
+                       "report."));
+    const QCommandLineOption jsonOption(
+        QStringLiteral("json"),
+        QStringLiteral("Report mode with a JSON report instead of the text report."));
     const QCommandLineOption cyclesOption(
         {QStringLiteral("c"), QStringLiteral("cycles")},
         QStringLiteral("Rounds for --report (default %1; 0 = until a signal stops the trace).")
@@ -245,9 +255,9 @@ int main(int argc, char *argv[])
         {QStringLiteral("m"), QStringLiteral("max-hops")},
         QStringLiteral("Maximum TTL (default 30)."), QStringLiteral("N"));
 
-    parser.addOptions({reportOption, cyclesOption, noDnsOption, showIpsOption, ipv4Option,
-                       ipv6Option, udpOption, tcpOption, portOption, sizeOption, intervalOption,
-                       timeoutOption, maxHopsOption});
+    parser.addOptions({reportOption, htmlOption, jsonOption, cyclesOption, noDnsOption,
+                       showIpsOption, ipv4Option, ipv6Option, udpOption, tcpOption, portOption,
+                       sizeOption, intervalOption, timeoutOption, maxHopsOption});
     parser.addPositionalArgument(QStringLiteral("host"),
                                  QStringLiteral("Target host name or IP address. In GUI mode "
                                                 "the trace starts immediately."),
@@ -300,6 +310,10 @@ int main(int argc, char *argv[])
         printError(QStringLiteral("options --udp and --tcp are mutually exclusive"));
         return ReportRunner::BadArguments;
     }
+    if (parser.isSet(htmlOption) && parser.isSet(jsonOption)) {
+        printError(QStringLiteral("options --html and --json are mutually exclusive"));
+        return ReportRunner::BadArguments;
+    }
 
     const QStringList positional = parser.positionalArguments();
     if (positional.size() > 1) {
@@ -315,7 +329,11 @@ int main(int argc, char *argv[])
         }
         TraceOptions options; // CLI defaults, independent of saved GUI settings
         ov.applyTo(options);
-        ReportRunner runner(host, options, ov.cycles.value_or(kDefaultCycles), ov.showIps);
+        const ReportRunner::Format format = parser.isSet(htmlOption) ? ReportRunner::Html
+                                            : parser.isSet(jsonOption) ? ReportRunner::Json
+                                                                       : ReportRunner::Text;
+        ReportRunner runner(host, options, ov.cycles.value_or(kDefaultCycles), ov.showIps,
+                            format);
         QObject::connect(
             &runner, &ReportRunner::finished, app.get(),
             [](int code) { QCoreApplication::exit(code); }, Qt::QueuedConnection);

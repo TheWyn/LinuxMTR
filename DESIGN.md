@@ -149,14 +149,37 @@ host text stays complete. The footer `LinMTR v<version> GPL V2 - WinMTR port for
 follows, without a newline. The HTML report keeps the upstream tags (`<center><h2>`,
 `<table border="1" align="center">`, `<tr><td>` cells) and escapes host texts.
 
+JSON report (`--json`): WinMTR has none, and LinMTR uses its own schema, not the one of
+`mtr --json`. `ReportBuilder::json()` writes a `QJsonDocument` in the indented format and
+ends it with one newline. `QJsonObject` sorts the keys in alphabetical order; this is
+accepted.
+
+- Top level: `hops` (array) and `linmtr` (object).
+- `linmtr`: `version` (string), `target` (string, the host as given), `address` (string, the
+  resolved target address; `null` before resolution), `protocol` (`icmp`, `udp` or `tcp`, from
+  `TraceSession::options()`, so after a fallback to UDP), `rounds` (int, `roundsCompleted()`).
+- Each hop: `ttl` (int), `address`, `hostname` and `error` (string, or `null` when the address
+  is null or the text is empty), `lossPercent` (int, `HopStats::lossPercent()`), `sent`,
+  `received` and `timedOut` (int), `bestMs`, `avgMs`, `worstMs` and `lastMs` (double,
+  milliseconds rounded to 3 decimals; 0 without a reply), `isTarget` (bool).
+
+The host name and the address are separate fields, so `-b` has no effect on the JSON report.
+The times have no INT_MAX limit, unlike the integer columns of the text and HTML reports.
+
 ## 6. CLI (`src/main.cpp`, `src/cli/ReportRunner`)
 
-- `--help`, `--version` and `--report` need no display. `--help-all` uses an offscreen
-  `QApplication`, because Qt lists the generic options of the application class that exists.
+- `--help`, `--version`, `--report`, `--html` and `--json` need no display. `--help-all` uses
+  an offscreen `QApplication`, because Qt lists the generic options of the application class
+  that exists.
 - GUI mode: `linmtr HOST` starts a trace of HOST. Options replace saved values for the session.
 - Report mode ignores the saved settings. `ReportRunner` sets `maxRounds = cycles`, prints
-  the text report when `roundCompleted` reaches `cycles`, and quits. A watchdog
+  the report when `roundCompleted` reaches `cycles`, and quits. A watchdog
   (cycles * interval + timeout + 10 s) prints the partial report and exits with 0.
+- `--html` and `--json` select the HTML or the JSON report and imply report mode, as
+  `mtr --json` does. `--report` together with one of them is valid: the format applies.
+  `--html` with `--json` is a usage error (status 2), as `--udp` with `--tcp`. The text and
+  HTML bytes do not change: the text report gets one newline after the footer, and the HTML
+  report prints as is (it ends with a newline).
 - `-c 0` gives `maxRounds = 0` (unlimited): the trace runs until a signal, without a watchdog.
 - Signals: `ReportRunner::start()` catches SIGINT, SIGTERM and SIGHUP through a self-pipe (a
   `socketpair` and a `QSocketNotifier` on its read end). The handler restores the default

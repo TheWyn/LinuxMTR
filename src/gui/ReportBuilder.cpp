@@ -3,6 +3,11 @@
 
 #include "gui/ReportBuilder.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+
+#include <cmath>
 #include <limits>
 
 #ifndef LINMTR_VERSION
@@ -21,6 +26,21 @@ QString field4(T value)
 QString footer()
 {
     return QStringLiteral("LinMTR v" LINMTR_VERSION " GPL V2 - WinMTR port for Linux");
+}
+
+QJsonValue jsonAddress(const QHostAddress &address)
+{
+    return address.isNull() ? QJsonValue() : QJsonValue(address.toString());
+}
+
+QJsonValue jsonText(const QString &text)
+{
+    return text.isEmpty() ? QJsonValue() : QJsonValue(text);
+}
+
+double jsonMs(double ms)
+{
+    return std::round(ms * 1000.0) / 1000.0;
 }
 
 } // namespace
@@ -103,4 +123,36 @@ QString ReportBuilder::html(const QList<HopStats> &hops, bool resolveNames, bool
 
     out += QStringLiteral("</table></body></html>\n");
     return out;
+}
+
+QString ReportBuilder::json(const QList<HopStats> &hops, const JsonInfo &info)
+{
+    QJsonArray hopArray;
+    for (const HopStats &hop : hops) {
+        hopArray.append(QJsonObject{
+            {QStringLiteral("ttl"), hop.ttl},
+            {QStringLiteral("address"), jsonAddress(hop.address)},
+            {QStringLiteral("hostname"), jsonText(hop.hostname)},
+            {QStringLiteral("error"), jsonText(hop.errorText)},
+            {QStringLiteral("lossPercent"), hop.lossPercent()},
+            {QStringLiteral("sent"), static_cast<qint64>(hop.sent)},
+            {QStringLiteral("received"), static_cast<qint64>(hop.received)},
+            {QStringLiteral("timedOut"), static_cast<qint64>(hop.timedOut)},
+            {QStringLiteral("bestMs"), jsonMs(hop.bestMs)},
+            {QStringLiteral("avgMs"), jsonMs(hop.averageMs())},
+            {QStringLiteral("worstMs"), jsonMs(hop.worstMs)},
+            {QStringLiteral("lastMs"), jsonMs(hop.lastMs)},
+            {QStringLiteral("isTarget"), hop.isTarget},
+        });
+    }
+    const QJsonObject linmtr{
+        {QStringLiteral("version"), info.version},
+        {QStringLiteral("target"), info.target},
+        {QStringLiteral("address"), jsonAddress(info.address)},
+        {QStringLiteral("protocol"), info.protocol},
+        {QStringLiteral("rounds"), info.rounds},
+    };
+    const QJsonDocument doc(QJsonObject{{QStringLiteral("hops"), hopArray},
+                                        {QStringLiteral("linmtr"), linmtr}});
+    return QString::fromUtf8(doc.toJson(QJsonDocument::Indented));
 }

@@ -91,6 +91,110 @@ const char kHtmlRowsIps[] =
     "<tr><td>evil&lt;b&gt;&amp;host.example (203.0.113.5)</td> <td>  30</td> <td>  10</td> <td>   7</td> <td>  19</td> <td>  21</td> <td>  25</td> <td>  20</td></tr>\n"
     "<tr><td>very-long-hostname.backbone.example.net (198.51.100.7)</td> <td>  34</td> <td>   4</td> <td>   2</td> <td>  30</td> <td>2147483647</td> <td>2147483647</td> <td>2147483647</td></tr>\n";
 
+// QJsonDocument::Indented layout: 4-space indent, keys in alphabetical order.
+const char kJsonEmpty[] =
+    "{\n"
+    "    \"hops\": [\n"
+    "    ],\n"
+    "    \"linmtr\": {\n"
+    "        \"address\": null,\n"
+    "        \"protocol\": \"icmp\",\n"
+    "        \"rounds\": 10,\n"
+    "        \"target\": \"example.com\",\n"
+    "        \"version\": \"0.1.0\"\n"
+    "    }\n"
+    "}\n";
+
+// sampleHops() with a hop 1 last time of 1.23456 ms (3 decimals: 1.235) and
+// hop 5 as the target. The times of hop 5 have no INT_MAX clamp.
+const char kJsonHops[] =
+    "{\n"
+    "    \"hops\": [\n"
+    "        {\n"
+    "            \"address\": \"192.168.1.1\",\n"
+    "            \"avgMs\": 1.42,\n"
+    "            \"bestMs\": 0.9,\n"
+    "            \"error\": null,\n"
+    "            \"hostname\": \"router.lan\",\n"
+    "            \"isTarget\": false,\n"
+    "            \"lastMs\": 1.235,\n"
+    "            \"lossPercent\": 0,\n"
+    "            \"received\": 10,\n"
+    "            \"sent\": 10,\n"
+    "            \"timedOut\": 0,\n"
+    "            \"ttl\": 1,\n"
+    "            \"worstMs\": 2.7\n"
+    "        },\n"
+    "        {\n"
+    "            \"address\": null,\n"
+    "            \"avgMs\": 0,\n"
+    "            \"bestMs\": 0,\n"
+    "            \"error\": null,\n"
+    "            \"hostname\": null,\n"
+    "            \"isTarget\": false,\n"
+    "            \"lastMs\": 0,\n"
+    "            \"lossPercent\": 100,\n"
+    "            \"received\": 0,\n"
+    "            \"sent\": 10,\n"
+    "            \"timedOut\": 10,\n"
+    "            \"ttl\": 2,\n"
+    "            \"worstMs\": 0\n"
+    "        },\n"
+    "        {\n"
+    "            \"address\": \"10.0.0.1\",\n"
+    "            \"avgMs\": 13,\n"
+    "            \"bestMs\": 11.2,\n"
+    "            \"error\": \"Destination host unreachable.\",\n"
+    "            \"hostname\": \"gw.example\",\n"
+    "            \"isTarget\": false,\n"
+    "            \"lastMs\": 12.6,\n"
+    "            \"lossPercent\": 60,\n"
+    "            \"received\": 4,\n"
+    "            \"sent\": 10,\n"
+    "            \"timedOut\": 6,\n"
+    "            \"ttl\": 3,\n"
+    "            \"worstMs\": 15.9\n"
+    "        },\n"
+    "        {\n"
+    "            \"address\": \"203.0.113.5\",\n"
+    "            \"avgMs\": 21.1,\n"
+    "            \"bestMs\": 19.1,\n"
+    "            \"error\": null,\n"
+    "            \"hostname\": \"evil<b>&host.example\",\n"
+    "            \"isTarget\": false,\n"
+    "            \"lastMs\": 20.5,\n"
+    "            \"lossPercent\": 30,\n"
+    "            \"received\": 7,\n"
+    "            \"sent\": 10,\n"
+    "            \"timedOut\": 3,\n"
+    "            \"ttl\": 4,\n"
+    "            \"worstMs\": 25.8\n"
+    "        },\n"
+    "        {\n"
+    "            \"address\": \"198.51.100.7\",\n"
+    "            \"avgMs\": 500000000015.1,\n"
+    "            \"bestMs\": 30.2,\n"
+    "            \"error\": null,\n"
+    "            \"hostname\": \"very-long-hostname.backbone.example.net\",\n"
+    "            \"isTarget\": true,\n"
+    "            \"lastMs\": 1000000000000,\n"
+    "            \"lossPercent\": 34,\n"
+    "            \"received\": 2,\n"
+    "            \"sent\": 4,\n"
+    "            \"timedOut\": 1,\n"
+    "            \"ttl\": 5,\n"
+    "            \"worstMs\": 1000000000000\n"
+    "        }\n"
+    "    ],\n"
+    "    \"linmtr\": {\n"
+    "        \"address\": \"203.0.113.1\",\n"
+    "        \"protocol\": \"icmp\",\n"
+    "        \"rounds\": 10,\n"
+    "        \"target\": \"example.com\",\n"
+    "        \"version\": \"0.1.0\"\n"
+    "    }\n"
+    "}\n";
+
 QString expected(const char *head, const char *rows, const char *tail)
 {
     return QString::fromLatin1(head) + QString::fromLatin1(rows) + QString::fromLatin1(tail);
@@ -98,7 +202,8 @@ QString expected(const char *head, const char *rows, const char *tail)
 
 } // namespace
 
-// Locks the WinMTR text and HTML report formats byte for byte.
+// Locks the WinMTR text and HTML report formats and the JSON report byte for
+// byte.
 class TestReportBuilder : public QObject
 {
     Q_OBJECT
@@ -108,6 +213,8 @@ private slots:
     void text();
     void html_data();
     void html();
+    void json_data();
+    void json();
     void toDisplayMs();
 };
 
@@ -149,6 +256,30 @@ void TestReportBuilder::html()
     QFETCH(bool, showIps);
     QFETCH(QString, report);
     QCOMPARE(ReportBuilder::html(hops, true, showIps), report);
+}
+
+void TestReportBuilder::json_data()
+{
+    QTest::addColumn<QList<HopStats>>("hops");
+    QTest::addColumn<QString>("address");
+    QTest::addColumn<QString>("report");
+
+    QList<HopStats> hops = sampleHops();
+    hops.first().lastMs = 1.23456;
+    hops.last().isTarget = true;
+    // No hops and no address: a signal stopped the trace during resolution.
+    QTest::newRow("empty") << QList<HopStats>() << QString() << QString::fromLatin1(kJsonEmpty);
+    QTest::newRow("hops") << hops << QStringLiteral("203.0.113.1") << QString::fromLatin1(kJsonHops);
+}
+
+void TestReportBuilder::json()
+{
+    QFETCH(QList<HopStats>, hops);
+    QFETCH(QString, address);
+    QFETCH(QString, report);
+    const ReportBuilder::JsonInfo info{QStringLiteral("0.1.0"), QStringLiteral("example.com"),
+                                       QHostAddress(address), QStringLiteral("icmp"), 10};
+    QCOMPARE(ReportBuilder::json(hops, info), report);
 }
 
 void TestReportBuilder::toDisplayMs()

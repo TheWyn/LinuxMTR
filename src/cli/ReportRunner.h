@@ -13,22 +13,23 @@ class QSocketNotifier;
 class QTimer;
 
 // Headless --report mode: traces one host for a number of rounds, prints the
-// WinMTR text report to stdout and reports an exit code. cycles replaces
-// options.maxRounds; cycles 0 traces until a signal. showIps is the -b option
-// of mtr. A watchdog fires after cycles * interval + timeout + 10 s of tracing
-// (not for cycles 0): it prints the partial report and still finishes with
-// Success. start() catches SIGINT, SIGTERM and SIGHUP: the first one prints
-// the report of the rounds so far and finishes with Success. A second signal
-// of the same kind ends the process with the default action. The signal
-// handlers are process-wide: only one runner may exist in a process.
+// report in the given format to stdout and reports an exit code. cycles
+// replaces options.maxRounds; cycles 0 traces until a signal. showIps is the
+// -b option of mtr. A watchdog fires after cycles * interval + timeout + 10 s
+// of tracing (not for cycles 0): it prints the partial report and still
+// finishes with Success. start() catches SIGINT, SIGTERM and SIGHUP: the first
+// one prints the report of the rounds so far and finishes with Success. A
+// second signal ends the process with the default action.
+// The signal handlers are process-wide: only one runner may exist in a process.
 class ReportRunner : public QObject
 {
     Q_OBJECT
 public:
     enum ExitCode { Success = 0, TraceFailed = 1, BadArguments = 2 };
+    enum Format { Text, Html, Json }; // the ReportBuilder report to print
 
     ReportRunner(const QString &host, const TraceOptions &options, int cycles, bool showIps,
-                 QObject *parent = nullptr);
+                 Format format, QObject *parent = nullptr);
     ~ReportRunner() override;
 
 public slots:
@@ -55,5 +56,6 @@ private:
     TraceOptions m_options;
     int m_cycles = 10;
     bool m_showIps = false;
+    Format m_format = Text;
     bool m_done = false;
 };

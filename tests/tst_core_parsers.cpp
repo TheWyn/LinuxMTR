@@ -496,7 +496,7 @@ void TestCoreParsers::reportRunnerStopsOnSignal()
     options.intervalSec = 0.2;
     options.resolveNames = false;
 
-    ReportRunner runner(QStringLiteral("127.0.0.1"), options, 0, false);
+    ReportRunner runner(QStringLiteral("127.0.0.1"), options, 0, false, ReportRunner::Text);
     QSignalSpy finished(&runner, &ReportRunner::finished);
 
     // Send stdout to a file. No check may fail before stdout is back.

@@ -49,7 +49,7 @@ void printError(const QString &message)
 } // namespace
 
 ReportRunner::ReportRunner(const QString &host, const TraceOptions &options, int cycles,
-                           bool showIps, QObject *parent)
+                           bool showIps, Format format, QObject *parent)
     : QObject(parent)
     , m_session(new TraceSession(this))
     , m_watchdog(new QTimer(this))
@@ -57,6 +57,7 @@ ReportRunner::ReportRunner(const QString &host, const TraceOptions &options, int
     , m_options(options)
     , m_cycles(cycles < 0 ? 0 : cycles)
     , m_showIps(showIps)
+    , m_format(format)
 {
     // Send exactly m_cycles rounds and wait for them, so that Sent equals
     // --cycles and no probe is still in flight when the report prints.
@@ -180,9 +181,29 @@ void ReportRunner::onStopSignal()
 
 void ReportRunner::printReport()
 {
-    // The report ends with the upstream footer line and no newline; add one.
-    writeTo(stdout, ReportBuilder::text(m_session->hops(), m_options.resolveNames, m_showIps)
-                        + QLatin1Char('\n'));
+    const QList<HopStats> hops = m_session->hops();
+    switch (m_format) {
+    case Text:
+        // The report ends with the upstream footer line and no newline; add one.
+        writeTo(stdout, ReportBuilder::text(hops, m_options.resolveNames, m_showIps)
+                            + QLatin1Char('\n'));
+        break;
+    case Html:
+        writeTo(stdout, ReportBuilder::html(hops, m_options.resolveNames, m_showIps));
+        break;
+    case Json: {
+        // The session options hold the protocol after a fallback to UDP.
+        const TraceOptions::Protocol protocol = m_session->options().protocol;
+        const ReportBuilder::JsonInfo info{
+            QStringLiteral(LINMTR_VERSION), m_host, m_session->targetAddress(),
+            protocol == TraceOptions::Protocol::Udp   ? QStringLiteral("udp")
+            : protocol == TraceOptions::Protocol::Tcp ? QStringLiteral("tcp")
+                                                      : QStringLiteral("icmp"),
+            m_session->roundsCompleted()};
+        writeTo(stdout, ReportBuilder::json(hops, info));
+        break;
+    }
+    }
 }
 
 void ReportRunner::finish(int exitCode)

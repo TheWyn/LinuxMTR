@@ -9,7 +9,8 @@ linmtr \- WinMTR\-style traceroute and ping network diagnostic tool
 .RI [ options ]
 .RI [ HOST ]
 .br
-.B linmtr \-\-report
+.B linmtr
+.RB { \-\-report | \-\-html | \-\-json }
 .RI [ options ]
 .I HOST
 .SH DESCRIPTION
@@ -52,14 +53,18 @@ box and starts the trace immediately.
 .TP
 .B Report mode
 The
-.B \-\-report
-option selects this mode.
+.BR \-\-report ", " \-\-html " and " \-\-json
+options select this mode.
 .B linmtr
 opens no window and needs no display server.
 It sends the number of rounds that
 .B \-\-cycles
 sets and waits until each probe has a reply or its reply timeout expires.
-Then it writes a text report to standard output and exits.
+Then it writes the report to standard output and exits.
+The report is a text report, unless you give
+.B \-\-html
+or
+.BR \-\-json .
 .PP
 Probing needs no root privileges and no file capabilities.
 Refer to
@@ -85,7 +90,7 @@ have their default values.
 .B \-\-report
 Use report mode: run without a GUI, trace for
 .B \-\-cycles
-rounds, write the text report to standard output, then exit.
+rounds, write the report (text by default) to standard output, then exit.
 .I HOST
 is necessary in this mode.
 When
@@ -93,6 +98,32 @@ When
 gets SIGINT (for example from Ctrl+C), SIGTERM or SIGHUP,
 it writes the report for the rounds done so far and exits with status 0.
 A second signal ends the process at once.
+.TP
+.B \-\-html
+Use report mode and write the HTML report instead of the text report.
+The HTML report has the format of the
+.B Export HTML
+button.
+You cannot use this option together with
+.BR \-\-json .
+.TP
+.B \-\-json
+Use report mode and write a JSON report instead of the text report.
+The object
+.B linmtr
+holds the version, the target as given, the target address, the protocol in use
+and the number of completed rounds.
+The array
+.B hops
+holds one object per hop:
+the hop number, the address, the host name, the ICMP error text,
+the loss percentage, the probe counts, a target flag,
+and the best, average, worst and last round\-trip times in milliseconds,
+with 3 decimals.
+A value that is not available is
+.BR null .
+You cannot use this option together with
+.BR \-\-html .
 .TP
 .BI "\-c, \-\-cycles " N
 Number of probe rounds in report mode, from 0 to 1000000.
@@ -225,12 +256,17 @@ Round\-trip times in milliseconds, shown as integers.
 .PP
 When the target replies, the table shows no rows after the target.
 .PP
-Report mode and the
+The
 .B Copy Text to clipboard
 and
 .B Export TEXT
-buttons make the text report.
+buttons make the text report, and so does report mode without
+.B \-\-html
+or
+.BR \-\-json .
 The
+.B \-\-html
+option and the
 .B Copy HTML to clipboard
 and
 .B Export HTML
@@ -446,7 +482,11 @@ and
 or both
 .B \-\-udp
 and
-.BR \-\-tcp .
+.BR \-\-tcp ,
+or both
+.B \-\-html
+and
+.BR \-\-json .
 .SH FILES
 .TP
 .I $XDG_CONFIG_HOME/LinMTR/LinMTR.conf
