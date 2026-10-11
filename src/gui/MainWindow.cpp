@@ -99,6 +99,18 @@ QString ipVersionKey(TraceOptions::IpVersion v)
     return QStringLiteral("auto");
 }
 
+// The host as part of a file name: at most 64 characters, and '_' for each
+// character that could be a path separator or confuse a shell.
+QString fileNamePart(const QString &host)
+{
+    QString name = host.trimmed().left(64);
+    for (QChar &ch : name) {
+        if (!ch.isLetterOrNumber() && ch != u'.' && ch != u'-' && ch != u'_')
+            ch = u'_';
+    }
+    return name;
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -586,8 +598,14 @@ void MainWindow::exportReport(bool html)
     const QString filter = html ? tr("HTML Files (*.htm *.html)") : tr("Text Files (*.txt)");
     const QString suffix = html ? QStringLiteral("html") : QStringLiteral("txt");
 
+    // A file path as the dir argument makes the dialog suggest that file name.
+    const QString host = fileNamePart(m_currentHost);
+    const QString suggested = host.isEmpty()
+        ? QDir::homePath()
+        : QDir::home().filePath(QStringLiteral("linmtr-") + host + QLatin1Char('.') + suffix);
+
     QString selectedFilter = filter;
-    QString path = QFileDialog::getSaveFileName(this, title, QDir::homePath(),
+    QString path = QFileDialog::getSaveFileName(this, title, suggested,
                                                 filter + QStringLiteral(";;") + tr("All Files (*)"),
                                                 &selectedFilter);
     if (path.isEmpty())

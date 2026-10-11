@@ -222,3 +222,5 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
 9. Host properties: real statistics and `No response from host` for a hop without an address
    (upstream: zeros); an ICMP error is the comment, not the Name (upstream: Name).
 10. Host history: newest first, without duplicates (upstream appends new hosts at the end).
+11. The export dialog suggests `linmtr-<host>.txt` or `.html` from the traced host; upstream
+    suggests no name.

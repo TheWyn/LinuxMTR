@@ -290,6 +290,7 @@ order and report layout. Its internals are new and designed for Linux.
 | Host properties | A hop without an address shows its real statistics and `No response from host`. For an ICMP error, the error text is the comment and **Name** shows the host name or address. | Zeros and an empty comment; the error text is **Name** and the comment is `Host alive.` |
 | Host history | Newest first; a host that you trace again moves to the top. A host goes in only after its name resolved, as in WinMTR. | New hosts at the end, no reordering |
 | Reports | Same layout; title `LinMTR statistics` (same length as `WinMTR statistics`, so columns align); `\n` line endings | `\r\n` line endings |
+| Export file name | `linmtr-<host>.txt` or `.html` suggested | None |
 | Settings | `~/.config/LinMTR/LinMTR.conf` | Windows registry |
 
 ## Upstream feature requests implemented
