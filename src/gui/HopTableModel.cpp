@@ -17,6 +17,7 @@ const std::array<int, HopTableModel::ColumnCount> kColumnWidths = {   // pixels
     285, 45, 75, 60, 60, 75, 75, 75, 75
 };
 
+// Does not compare history: each addSample() in the engine also changes received or timedOut.
 bool sameHop(const HopStats &a, const HopStats &b)
 {
     return a.ttl == b.ttl

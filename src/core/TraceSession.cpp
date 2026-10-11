@@ -485,6 +485,7 @@ void TraceSession::Private::onProbeEvent(const ProbeEvent &ev)
             hop.worstMs = std::max(hop.worstMs, rtt);
         }
         hop.totalMs += rtt;
+        hop.addSample(it->round, static_cast<float>(rtt));
         hop.errorText.clear();
         updateHopAddress(hop, ev.responder, ev.reachedTarget);
         break;
@@ -492,11 +493,13 @@ void TraceSession::Private::onProbeEvent(const ProbeEvent &ev)
     case ProbeEvent::Kind::Error:
         // WinMTR: an ICMP error names the hop but is not a reply (counts as loss).
         ++hop.timedOut;
+        hop.addSample(it->round, -1.0f);
         hop.errorText = ev.errorText;
         updateHopAddress(hop, ev.responder, false);
         break;
     case ProbeEvent::Kind::Lost:
         ++hop.timedOut;
+        hop.addSample(it->round, -1.0f);
         break;
     }
     releasePending(it);
@@ -611,6 +614,7 @@ void TraceSession::Private::sendProbe(int ttl)
         ++round.sendOk;
     } else {
         ++hop.timedOut;
+        hop.addSample(currentRound, -1.0f);
         ++round.sendFailed;
         lastSendErrno = err;
         if (!reportedErrnos.contains(err)) {
@@ -648,8 +652,11 @@ void TraceSession::Private::sweepTimeouts(qint64 now)
             continue;
         }
         const int ttl = it->ttl;
-        if (ttl >= 1 && ttl <= static_cast<int>(hopStats.size()))
-            ++hopStats[static_cast<std::size_t>(ttl - 1)].timedOut;
+        if (ttl >= 1 && ttl <= static_cast<int>(hopStats.size())) {
+            HopStats &hop = hopStats[static_cast<std::size_t>(ttl - 1)];
+            ++hop.timedOut;
+            hop.addSample(it->round, -1.0f);
+        }
         if (prober)
             prober->discard(it.key());   // TCP: closes the probe's socket
         it = releasePending(it);

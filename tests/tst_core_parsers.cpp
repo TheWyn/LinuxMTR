@@ -149,6 +149,7 @@ private slots:
     void decodeZeroLengthControl();
     void classify_data();
     void classify();
+    void hopSampleOrderAndCap();
     void liveLoopbackTrace();
     void reportRunnerStopsOnSignal();
 };
@@ -448,6 +449,27 @@ void TestCoreParsers::classify()
     QCOMPARE(v.portUnreachable, portUnreachable);
 }
 
+// A timeout can resolve after a reply of a later round: the history stays in
+// round order and keeps only the newest kHistoryRounds samples.
+void TestCoreParsers::hopSampleOrderAndCap()
+{
+    HopStats hop;
+    hop.addSample(1, 1.5f);
+    hop.addSample(3, 3.5f);
+    hop.addSample(2, -1.0f);
+    QCOMPARE(hop.history.size(), qsizetype(3));
+    for (int i = 0; i < 3; ++i)
+        QCOMPARE(hop.history.at(i).round, i + 1);
+    QVERIFY(hop.history.at(1).ms < 0.0f);
+
+    HopStats full;
+    for (int r = 1; r <= HopStats::kHistoryRounds + 5; ++r)
+        full.addSample(r, static_cast<float>(r));
+    QCOMPARE(full.history.size(), qsizetype(HopStats::kHistoryRounds));
+    QCOMPARE(full.history.constFirst().round, 6);
+    QCOMPARE(full.history.constLast().round, HopStats::kHistoryRounds + 5);
+}
+
 void TestCoreParsers::liveLoopbackTrace()
 {
     if (const QString reason = loopbackPingUnavailable(); !reason.isEmpty())
@@ -475,6 +497,13 @@ void TestCoreParsers::liveLoopbackTrace()
     QVERIFY(hop.isTarget);
     QCOMPARE(hop.sent, quint64(3));
     QCOMPARE(hop.received + hop.timedOut, quint64(3));
+    QCOMPARE(hop.history.size(), qsizetype(3));
+    QCOMPARE(quint64(hop.history.size()), hop.received + hop.timedOut);
+    for (int i = 0; i < hop.history.size(); ++i) {
+        QCOMPARE(hop.history.at(i).round, i + 1);
+        if (hop.received == 3)
+            QVERIFY(hop.history.at(i).ms >= 0.0f);
+    }
 
     // No fourth round starts: wait for more than two intervals.
     QTest::qWait(500);

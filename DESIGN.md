@@ -84,6 +84,10 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   seq space does not fill. At the cap, the session skips probes and emits one capacity
   `infoMessage` per trace, as for the TCP cap. An entry older than
   `timeoutSec` leaves the table and adds `timedOut++` to its hop.
+- Every resolved probe adds one `HopSample` to its hop: the round and the RTT, or a negative
+  value for no reply. This includes ICMP errors, local errors, timeouts and failed sends.
+  `HopStats::addSample()` keeps the newest `kHistoryRounds` samples in round order, also when
+  a timeout resolves after a reply of a later round.
 - `roundCompleted(n)` fires when every probe of round n has an answer or timed out. With
   `maxRounds > 0`, no round starts after that many; draining continues until the last round
   resolves (report mode sends exactly `--cycles` rounds).
