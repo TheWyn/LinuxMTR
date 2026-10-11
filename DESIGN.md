@@ -155,6 +155,10 @@ Labels, mnemonics and button texts are verbatim upstream (`WinMTR.rc`).
 - Both graphs: the X axis is a window of the newest rounds, one round for each 3 px of plot
   width (at least 2, at most `kHistoryRounds`). The newest round is at the right edge, and
   older rounds leave at the left edge, so the lines do not compress as the history grows.
+  A tooltip shows the visible sample nearest to the pointer, within 6 px: the hop number,
+  the host text of the row (`displayHost()`), the send time of the probe
+  (`yyyy-MM-dd hh:mm:ss`, local time) and the RTT or `Lost`. The point of a lost probe is
+  the middle of its tick.
 
 ## 5. Report formats (`ReportBuilder`, shared by GUI and CLI)
 

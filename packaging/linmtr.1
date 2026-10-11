@@ -333,6 +333,10 @@ In the graph, a gap in the line is a round without a reply, and a short tick
 below the zero line is a lost probe.
 The graph shows one round for each 3 pixels of its width;
 when the graph is full, the oldest rounds move off its left edge.
+Hold the pointer on a line or a tick to see the hop, its host, the time when
+the probe was sent and the round\-trip time, or
+.B Lost
+for a lost probe.
 .PP
 To copy one hop, select its row and press
 .BR Ctrl+C .
@@ -363,7 +367,11 @@ dialog sets the values for traces started from the window:
 (off by default).
 .B Show route graph
 shows a graph of the round\-trip times of all hops under the table.
-Its
+This graph also shows the hop, its host, the send time and the round\-trip
+time of the probe under the pointer, or
+.B Lost
+for a lost probe.
+The
 .B Probing
 group has
 .BR Protocol " (ICMP, UDP or TCP),"

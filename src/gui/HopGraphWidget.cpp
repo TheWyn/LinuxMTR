@@ -3,8 +3,11 @@
 
 #include "gui/HopGraphWidget.h"
 
+#include <QDateTime>
+#include <QHelpEvent>
 #include <QPainter>
 #include <QPolygonF>
+#include <QToolTip>
 
 #include <algorithm>
 #include <array>
@@ -18,6 +21,7 @@ constexpr int kMarginTop = 8;
 constexpr int kLegendHeight = 16;
 constexpr int kMarginBottom = 18;   // lost-probe ticks
 constexpr int kPxPerRound = 3;     // X scale: older rounds scroll off instead of compressing
+constexpr int kHitPx = 6;          // tooltip: the largest pointer distance to a sample
 
 // The Tableau 10 palette: ten hues that are easy to tell apart.
 constexpr std::array<QRgb, 10> kPalette = {
@@ -98,6 +102,52 @@ HopGraphWidget::Layout HopGraphWidget::layout() const
     }
     l.ceiling = niceCeiling(maxMs);
     return l;
+}
+
+QString HopGraphWidget::toolTipAt(const QPoint &pos) const
+{
+    const Layout l = layout();
+    if (l.empty)
+        return {};
+    const Series *hitSeries = nullptr;
+    const HopSample *hit = nullptr;
+    double best = std::numeric_limits<double>::max();
+    for (const Series &s : m_series) {
+        for (const HopSample &v : s.samples) {
+            if (v.round < l.startRound)
+                continue;
+            const double dx = l.x(v.round) - pos.x();
+            const double dy = (v.ms < 0 ? l.bottom + 4 : l.y(v.ms)) - pos.y();
+            const double d = dx * dx + dy * dy;
+            if (d <= kHitPx * kHitPx && d < best) {   // strict: the first found wins a tie
+                best = d;
+                hitSeries = &s;
+                hit = &v;
+            }
+        }
+    }
+    if (hit == nullptr)
+        return {};
+    const QString sentAt = QDateTime::fromMSecsSinceEpoch(hit->sentAtMs)
+                               .toString(QStringLiteral("yyyy-MM-dd hh:mm:ss"));
+    return tr("Hop %1: %2").arg(hitSeries->label, hitSeries->host) + QLatin1Char('\n') + sentAt
+        + QStringLiteral("  ")
+        + (hit->ms < 0 ? tr("Lost") : tr("%1 ms").arg(static_cast<double>(hit->ms), 0, 'f', 1));
+}
+
+bool HopGraphWidget::event(QEvent *e)
+{
+    if (e->type() != QEvent::ToolTip)
+        return QWidget::event(e);
+    const auto *help = static_cast<QHelpEvent *>(e);
+    const QString text = toolTipAt(help->pos());
+    if (text.isEmpty()) {
+        QToolTip::hideText();
+        e->ignore();
+    } else {
+        QToolTip::showText(help->globalPos(), text, this);
+    }
+    return true;
 }
 
 void HopGraphWidget::paintEvent(QPaintEvent *)

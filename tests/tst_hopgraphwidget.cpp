@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Wyn
 
 #include <QApplication>
+#include <QDateTime>
 #include <QImage>
 #include <QtTest>
 
@@ -19,6 +20,7 @@ constexpr int kPlotLeft = 44;
 constexpr int kPlotRight = kWidth - 8;
 constexpr int kBaseline = kHeight - 18;
 constexpr int kSpan = (kPlotRight - kPlotLeft) / 3;   // 116 rounds
+constexpr qint64 kEpochMs = 1760198400000;            // send time of round 0
 
 const QColor kRed(255, 0, 0);
 const QColor kBlue(0, 0, 255);
@@ -51,7 +53,7 @@ QImage render(HopGraphWidget &graph)
     return image;
 }
 
-// Rounds 1..30 on a curve; lostRound gets no reply.
+// Rounds 1..30 on a curve, one round each second; lostRound gets no reply.
 QList<HopSample> curve(double base, double amplitude, int lostRound = 0)
 {
     QList<HopSample> samples;
@@ -59,7 +61,7 @@ QList<HopSample> curve(double base, double amplitude, int lostRound = 0)
         const float ms = round == lostRound
             ? -1.0f
             : static_cast<float>(base + amplitude * std::sin(round / 3.0));
-        samples.append(HopSample{round, ms});
+        samples.append(HopSample{round, ms, kEpochMs + round * 1000});
     }
     return samples;
 }
@@ -77,6 +79,7 @@ private slots:
     void emptySeries();
     void highlightDrawnLast();
     void oldRoundsScrollOff();
+    void toolTipAtSample();
 };
 
 void TestHopGraphWidget::niceCeiling_data()
@@ -182,6 +185,43 @@ void TestHopGraphWidget::oldRoundsScrollOff()
             tick = tick || isClose(image.pixel(x, y), kRed);
     }
     QVERIFY(tick);
+
+    // The lost round before the window is 3 px left of the plot; it must not answer.
+    QVERIFY(graph.toolTipAt(QPoint(kPlotLeft - 3, kBaseline + 4)).isEmpty());
+}
+
+void TestHopGraphWidget::toolTipAtSample()
+{
+    const QList<HopSample> samples = curve(20.0, 10.0, 15);
+    HopGraphWidget graph;
+    // Hop 2 has the same samples: on equal distance the first series wins.
+    graph.setSeries({{QStringLiteral("1"), kRed, samples, QStringLiteral("host.example")},
+                     {QStringLiteral("2"), kBlue, samples, QStringLiteral("other")}});
+    graph.resize(kWidth, kHeight);
+
+    double maxMs = 0.0;
+    for (const HopSample &v : samples)
+        maxMs = qMax(maxMs, static_cast<double>(v.ms));
+    QCOMPARE(HopGraphWidget::niceCeiling(maxMs), 50.0);
+
+    // Round 30 is at the right edge of the plot.
+    const HopSample &last = samples.constLast();
+    const int y = qRound(kBaseline - last.ms / 50.0 * (kBaseline - 8));
+    QCOMPARE(graph.toolTipAt(QPoint(kPlotRight, y)),
+             QStringLiteral("Hop 1: host.example\n")
+                 + QDateTime::fromMSecsSinceEpoch(last.sentAtMs)
+                       .toString(QStringLiteral("yyyy-MM-dd hh:mm:ss"))
+                 + QStringLiteral("  ") + QString::number(last.ms, 'f', 1) + QStringLiteral(" ms"));
+
+    // The point of a lost probe is the middle of its tick, 4 px below the zero
+    // line: 5 px further down is still within reach, the zero line is not.
+    const int startRound = 30 - kSpan + 1;
+    const int tickX = qRound(kPlotLeft + (15 - startRound) * double(kPlotRight - kPlotLeft)
+                             / (kSpan - 1));
+    QVERIFY(graph.toolTipAt(QPoint(tickX, kBaseline + 4)).endsWith(QStringLiteral("Lost")));
+    QVERIFY(graph.toolTipAt(QPoint(tickX, kBaseline + 9)).endsWith(QStringLiteral("Lost")));
+
+    QVERIFY(graph.toolTipAt(QPoint(kPlotLeft + 2, 10)).isEmpty());
 }
 
 int main(int argc, char *argv[])

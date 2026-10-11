@@ -413,7 +413,7 @@ void MainWindow::refreshGraph()
     QList<HopGraphWidget::Series> series;
     for (const HopStats &hop : m_model->hops()) {
         series.append({QString::number(hop.ttl), HopGraphWidget::seriesColor(hop.ttl - 1),
-                       hop.history});
+                       hop.history, hop.displayHost(m_model->resolveNames(), m_model->showIps())});
     }
     m_graph->setSeries(series, m_table->currentIndex().row());
 }

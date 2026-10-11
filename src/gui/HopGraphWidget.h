@@ -23,6 +23,8 @@ public:
         QString label;
         QColor color;
         QList<HopSample> samples;   // ascending round order
+        // "= {}" keeps 3-member brace initializers free of -Wmissing-field-initializers.
+        QString host = {};          // host text of the hop, for the tooltip
     };
 
     explicit HopGraphWidget(QWidget *parent = nullptr);
@@ -42,7 +44,14 @@ public:
 
     QSize minimumSizeHint() const override;
 
+    // The tooltip text for the visible sample nearest to pos, within 6 px:
+    // "Hop <label>: <host>", then the send time and the RTT or "Lost". The
+    // point of a lost probe is the middle of its tick. Empty when no sample is
+    // near.
+    QString toolTipAt(const QPoint &pos) const;
+
 protected:
+    bool event(QEvent *e) override;
     void paintEvent(QPaintEvent *event) override;
 
 private:

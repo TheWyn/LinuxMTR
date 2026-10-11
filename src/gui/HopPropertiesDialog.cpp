@@ -146,5 +146,6 @@ void HopPropertiesDialog::refresh()
     setField(m_average, pingText(hop.averageMs()));
     setField(m_worst, pingText(hop.worstMs));
     m_graph->setSeries({{QString::number(hop.ttl), HopGraphWidget::seriesColor(hop.ttl - 1),
-                         hop.history}});
+                         hop.history,
+                         hop.displayHost(m_model->resolveNames(), m_model->showIps())}});
 }
