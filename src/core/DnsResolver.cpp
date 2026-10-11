@@ -105,12 +105,16 @@ void DnsResolver::finished(quint64 generation, const QString &key, const QHostAd
     if (info.error() == QHostInfo::NoError)
         name = sanitizeHostName(info.hostName(), key);
 
-    if (m_cache.size() >= kMaxCacheEntries)
-        m_cache.clear();
-    m_cache.insert(key, name);
+    // Qt gives a failed PTR lookup (NXDOMAIN or timeout) as the numeric address
+    // with NoError, so it is an empty name here. Do not cache it: retry later.
+    if (!name.isEmpty()) {
+        if (m_cache.size() >= kMaxCacheEntries)
+            m_cache.clear();
+        m_cache.insert(key, name);
+    }
 
     if (generation != m_generation)
-        return;   // aborted: keep the cache entry only
+        return;   // aborted: no callback
 
     m_inFlight.remove(key);
     if (m_callback)

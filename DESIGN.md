@@ -92,11 +92,13 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   stops the timer: an `Idle` session never emits it, and slots of `stateChanged(Idle)` read
   the final `hops()` themselves.
 - DNS (`DnsResolver`): asynchronous `QHostInfo` lookups, a cache of at most 4096 names, at
-  most 8 lookups at a time. It drops PTR names that are not plausible host names. Forward
-  resolution: a literal IP skips the lookup; `IpVersion::Auto` takes the first address that
-  the lookup returns (`QHostInfo` keeps the `getaddrinfo` order, which glibc sorts by
-  RFC 6724, so a host with IPv6 connectivity gets IPv6 first, as with mtr); `V4` and `V6`
-  filter strictly (no match: `errorOccurred`).
+  most 8 lookups at a time. It drops PTR names that are not plausible host names. The cache
+  keeps no failed lookup: the hop shows its address, and the next lookup of that address
+  (a new responder or a new trace) tries again. Forward resolution: a literal IP skips the
+  lookup; `IpVersion::Auto` takes the first address that the lookup returns (`QHostInfo`
+  keeps the `getaddrinfo` order, which glibc sorts by RFC 6724, so a host with IPv6
+  connectivity gets IPv6 first, as with mtr); `V4` and `V6` filter strictly (no match:
+  `errorOccurred`).
 
 ### 3.4 TCP backend (`TcpProber`)
 

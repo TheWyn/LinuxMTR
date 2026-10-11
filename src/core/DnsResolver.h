@@ -18,7 +18,8 @@ namespace linmtr::core {
 
 // Asynchronous reverse DNS through QHostInfo with an address -> name cache,
 // in-flight de-duplication and at most kMaxConcurrent lookups at a time.
-// The cache keeps a failed lookup as an empty name; the caller shows the address.
+// The cache keeps only names. After a failed lookup, the callback gets an empty
+// name and the caller shows the address; the next resolve() of it tries again.
 class DnsResolver : public QObject
 {
 public:
@@ -36,9 +37,10 @@ public:
 
     void setCallback(Callback callback);
 
-    // Returns true and sets *name when the cache has the result (possibly empty).
-    // Otherwise schedules a lookup (once per address) and returns false. A null
-    // address returns false and schedules nothing.
+    // Returns true and sets *name when the cache has the name. Otherwise
+    // schedules a lookup (none while one for this address is queued or in
+    // flight) and returns false. A null address returns false and schedules
+    // nothing.
     bool resolve(const QHostAddress &address, QString *name);
 
     // Cancels all queued and in-flight lookups; their callbacks never run.
