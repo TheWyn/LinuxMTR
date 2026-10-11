@@ -140,13 +140,13 @@ This installs the `linmtr` binary, the desktop entry, the icon and the man page.
 
 ## Installing on Arch Linux (PKGBUILD)
 
-The PKGBUILD in `packaging/arch/` downloads the tagged release archive from GitHub,
-builds it, runs the tests and packages the result. The `linmtr-git` PKGBUILD in
+The PKGBUILD in `packaging/arch/linmtr/` downloads the tagged release archive from
+GitHub, builds it, runs the tests and packages the result. The `linmtr-git` PKGBUILD in
 `packaging/arch/linmtr-git/` builds the latest `main` commit instead; it provides and
 conflicts with `linmtr`.
 
 ```sh
-cd packaging/arch && makepkg -si
+cd packaging/arch/linmtr && makepkg -si
 ```
 
 The package installs:
@@ -158,8 +158,8 @@ The package installs:
 | Icon | `/usr/share/icons/hicolor/scalable/apps/linmtr.svg` |
 | Man page | `/usr/share/man/man1/linmtr.1.gz` |
 
-To remove it: `sudo pacman -R linmtr`. To delete the makepkg work directories in
-`packaging/arch/`, use `makepkg -c` or `makepkg -C`.
+To remove it: `sudo pacman -R linmtr`. To delete the makepkg work directories next to
+the PKGBUILD, use `makepkg -c` or `makepkg -C`.
 
 The package depends on `qt6-base`, `glibc`, `libgcc`, `libstdc++` and
 `hicolor-icon-theme` (which owns the icon directories).
