@@ -17,7 +17,7 @@ constexpr int kMarginRight = 8;
 constexpr int kMarginTop = 8;
 constexpr int kLegendHeight = 16;
 constexpr int kMarginBottom = 18;   // lost-probe ticks
-constexpr int kMinRounds = 60;
+constexpr int kPxPerRound = 3;     // X scale: older rounds scroll off instead of compressing
 
 // The Tableau 10 palette: ten hues that are easy to tell apart.
 constexpr std::array<QRgb, 10> kPalette = {
@@ -69,63 +69,63 @@ QSize HopGraphWidget::minimumSizeHint() const
     return {240, 120};
 }
 
+HopGraphWidget::Layout HopGraphWidget::layout() const
+{
+    Layout l;
+    l.left = kMarginLeft;
+    l.right = width() - kMarginRight;
+    l.top = kMarginTop + (m_legendVisible ? kLegendHeight : 0);
+    l.bottom = height() - kMarginBottom;
+    l.plotW = l.right - l.left;
+    l.plotH = l.bottom - l.top;
+
+    int lastRound = std::numeric_limits<int>::min();
+    for (const Series &s : m_series) {
+        if (!s.samples.isEmpty())
+            lastRound = std::max(lastRound, s.samples.constLast().round);
+    }
+    l.empty = lastRound == std::numeric_limits<int>::min();
+    l.span = std::clamp(static_cast<int>(l.plotW / kPxPerRound), 2, HopStats::kHistoryRounds);
+    // Without samples, lastRound is INT_MIN and the subtraction would overflow.
+    l.startRound = l.empty ? 0 : lastRound - l.span + 1;
+
+    double maxMs = 0.0;
+    for (const Series &s : m_series) {
+        for (const HopSample &v : s.samples) {
+            if (v.round >= l.startRound)
+                maxMs = std::max(maxMs, static_cast<double>(v.ms));
+        }
+    }
+    l.ceiling = niceCeiling(maxMs);
+    return l;
+}
+
 void HopGraphWidget::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
     p.fillRect(rect(), palette().base());
 
-    const int left = kMarginLeft;
-    const int right = width() - kMarginRight;
-    const int top = kMarginTop + (m_legendVisible ? kLegendHeight : 0);
-    const int bottom = height() - kMarginBottom;
-    const double plotW = right - left;
-    const double plotH = bottom - top;
-
-    int firstRound = std::numeric_limits<int>::max();
-    int lastRound = std::numeric_limits<int>::min();
-    for (const Series &s : m_series) {
-        if (s.samples.isEmpty())
-            continue;
-        firstRound = std::min(firstRound, s.samples.constFirst().round);
-        lastRound = std::max(lastRound, s.samples.constLast().round);
-    }
-    const bool empty = lastRound < firstRound;
-    const int span = empty ? kMinRounds
-                           : std::max(kMinRounds, std::min(HopStats::kHistoryRounds,
-                                                           lastRound - firstRound + 1));
-    // Without samples, lastRound is INT_MIN and the subtraction would overflow.
-    const int startRound = empty ? 0 : lastRound - span + 1;
-
-    double maxMs = 0.0;
-    for (const Series &s : m_series) {
-        for (const HopSample &v : s.samples) {
-            if (v.round >= startRound)
-                maxMs = std::max(maxMs, static_cast<double>(v.ms));
-        }
-    }
-    const double ceiling = niceCeiling(maxMs);
-    const auto xAt = [&](int round) { return left + (round - startRound) * plotW / (span - 1); };
-    const auto yAt = [&](float ms) { return bottom - ms / ceiling * plotH; };
+    const Layout l = layout();
 
     // Grid and labels before antialiasing, so that the 1 px lines stay sharp.
     const QColor textColor = palette().text().color();
     const QColor midColor = palette().mid().color();
     const int textH = fontMetrics().height();
     for (int i = 0; i <= 4; ++i) {
-        const int y = qRound(bottom - i * plotH / 4);
+        const int y = qRound(l.bottom - i * l.plotH / 4);
         p.setPen(QPen(midColor, 1));
-        p.drawLine(left, y, right, y);
+        p.drawLine(l.left, y, l.right, y);
         p.setPen(textColor);
-        p.drawText(QRect(0, y - textH / 2, left - 4, textH), Qt::AlignRight | Qt::AlignVCenter,
-                   QString::number(ceiling * i / 4));
+        p.drawText(QRect(0, y - textH / 2, l.left - 4, textH), Qt::AlignRight | Qt::AlignVCenter,
+                   QString::number(l.ceiling * i / 4));
     }
 
     if (m_legendVisible) {
         const int centreY = (kMarginTop + kLegendHeight) / 2;
-        int x = left;
+        int x = l.left;
         for (const Series &s : m_series) {
             const int itemW = 8 + 4 + fontMetrics().horizontalAdvance(s.label);
-            if (x + itemW > right)
+            if (x + itemW > l.right)
                 break;
             p.fillRect(x, centreY - 4, 8, 8, s.color);
             p.drawText(QRect(x + 12, centreY - textH / 2, itemW - 12, textH),
@@ -134,9 +134,9 @@ void HopGraphWidget::paintEvent(QPaintEvent *)
         }
     }
 
-    if (empty) {
+    if (l.empty) {
         p.setPen(midColor);
-        p.drawText(QRectF(left, top, plotW, plotH), Qt::AlignCenter, tr("No samples yet."));
+        p.drawText(QRectF(l.left, l.top, l.plotW, l.plotH), Qt::AlignCenter, tr("No samples yet."));
         return;
     }
 
@@ -153,18 +153,18 @@ void HopGraphWidget::paintEvent(QPaintEvent *)
         };
         int prevRound = 0;
         for (const HopSample &v : s.samples) {
-            if (v.round < startRound)
+            if (v.round < l.startRound)
                 continue;
             if (v.ms < 0) {
                 flush();
                 // Whole pixels: an antialiased 1 px tick would be a pale smear.
-                p.fillRect(QRect(qRound(xAt(v.round) - penWidth / 2.0), bottom + 2, penWidth, 4),
+                p.fillRect(QRect(qRound(l.x(v.round) - penWidth / 2.0), l.bottom + 2, penWidth, 4),
                            s.color);
                 continue;
             }
             if (!run.isEmpty() && v.round != prevRound + 1)
                 flush();
-            run.append(QPointF(xAt(v.round), yAt(v.ms)));
+            run.append(QPointF(l.x(v.round), l.y(v.ms)));
             prevRound = v.round;
         }
         flush();

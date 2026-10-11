@@ -12,12 +12,13 @@
 namespace {
 
 // The geometry that HopGraphWidget.cpp documents, for a 400 x 200 widget
-// without a legend.
+// without a legend. The window has one round for each 3 px of plot width.
 constexpr int kWidth = 400;
 constexpr int kHeight = 200;
 constexpr int kPlotLeft = 44;
 constexpr int kPlotRight = kWidth - 8;
 constexpr int kBaseline = kHeight - 18;
+constexpr int kSpan = (kPlotRight - kPlotLeft) / 3;   // 116 rounds
 
 const QColor kRed(255, 0, 0);
 const QColor kBlue(0, 0, 255);
@@ -75,6 +76,7 @@ private slots:
     void drawsLinesAndLostTicks();
     void emptySeries();
     void highlightDrawnLast();
+    void oldRoundsScrollOff();
 };
 
 void TestHopGraphWidget::niceCeiling_data()
@@ -110,8 +112,10 @@ void TestHopGraphWidget::drawsLinesAndLostTicks()
     QVERIFY(countClose(image, kRed) > 20);
     QVERIFY(countClose(image, kBlue) > 20);
 
-    // Rounds 1..30 fill the newest 60 rounds: -29..30.
-    const int tickX = qRound(kPlotLeft + (15 - -29) * double(kPlotRight - kPlotLeft) / 59);
+    // Rounds 1..30 are the newest of the window: it starts at 30 - kSpan + 1.
+    const int startRound = 30 - kSpan + 1;
+    const int tickX = qRound(kPlotLeft + (15 - startRound) * double(kPlotRight - kPlotLeft)
+                             / (kSpan - 1));
     bool tick = false;
     for (int x = tickX - 2; x <= tickX + 2; ++x) {
         for (int y = kBaseline + 1; y < kHeight; ++y)
@@ -144,6 +148,40 @@ void TestHopGraphWidget::highlightDrawnLast()
     const QImage image = render(graph);
     QVERIFY(countClose(image, kRed) > 20);
     QCOMPARE(countClose(image, kBlue), 0);
+}
+
+// 1000 rounds do not fit into the window: round 1 leaves at the left edge and
+// the first round of the window is at the left edge of the plot.
+void TestHopGraphWidget::oldRoundsScrollOff()
+{
+    const int firstVisible = 1000 - kSpan + 1;
+    QList<HopSample> samples;
+    for (int round = 1; round <= 1000; ++round) {
+        const bool reply = round == 1 || round == firstVisible;
+        samples.append(HopSample{round, reply ? 50.0f : -1.0f});
+    }
+    HopGraphWidget graph;
+    graph.setSeries({{QStringLiteral("1"), kRed, samples}});
+    const QImage image = render(graph);
+
+    bool atLeft = false;
+    for (int y = 0; y < kBaseline; ++y) {
+        for (int x = 0; x < kWidth; ++x) {
+            if (!isClose(image.pixel(x, y), kRed))
+                continue;
+            QVERIFY2(x >= kPlotLeft - 1 && x <= kPlotLeft + 2,
+                     qPrintable(QStringLiteral("red at %1,%2").arg(x).arg(y)));
+            atLeft = true;
+        }
+    }
+    QVERIFY(atLeft);
+
+    bool tick = false;
+    for (int y = kBaseline + 1; y < kHeight; ++y) {
+        for (int x = 0; x < kWidth; ++x)
+            tick = tick || isClose(image.pixel(x, y), kRed);
+    }
+    QVERIFY(tick);
 }
 
 int main(int argc, char *argv[])

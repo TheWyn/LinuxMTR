@@ -152,6 +152,9 @@ Labels, mnemonics and button texts are verbatim upstream (`WinMTR.rc`).
   of 10 colours. The line of the current row is wider and on top. `Show route graph`
   (`options/showGraph`, off by default) shows the graph; when it is hidden, the table uses
   the full height. `ui/graphSplitter` keeps the splitter state.
+- Both graphs: the X axis is a window of the newest rounds, one round for each 3 px of plot
+  width (at least 2, at most `kHistoryRounds`). The newest round is at the right edge, and
+  older rounds leave at the left edge, so the lines do not compress as the history grows.
 
 ## 5. Report formats (`ReportBuilder`, shared by GUI and CLI)
 

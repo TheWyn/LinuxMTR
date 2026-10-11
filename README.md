@@ -205,9 +205,10 @@ the dialogs stay open when you stop and start a trace. To show a graph of all ho
 the table, select **Show route graph** in **Options**. Drag the bar between the table and
 the graph to change their heights. In both graphs, a line shows the round-trip time of a
 hop in each round. A line has a gap where a round has no reply, and a short tick below
-the zero line marks each lost probe. The graphs show the most recent rounds, at most
-3600 (one hour at the default interval). In the route graph, the legend gives the hop
-number of each colour, and the hop that you select in the table has a wider line.
+the zero line marks each lost probe. A graph shows one round for each 3 pixels of its
+width. When the graph is full, the oldest rounds move off its left edge. In the route
+graph, the legend gives the hop number of each colour, and the hop that you select in the
+table has a wider line.
 
 ### Command line
 

@@ -11,8 +11,9 @@
 #include "core/HopStats.h"
 
 // Line graph of round-trip times over probe rounds, one line per series. A lost
-// probe is a short tick below the zero line. The X axis shows the newest
-// rounds: at least 60, at most HopStats::kHistoryRounds.
+// probe is a short tick below the zero line. The X axis is a window of the
+// newest rounds, one round for each 3 px of plot width (at least 2, at most
+// HopStats::kHistoryRounds); older rounds leave at the left edge.
 class HopGraphWidget : public QWidget
 {
     Q_OBJECT
@@ -45,6 +46,26 @@ protected:
     void paintEvent(QPaintEvent *event) override;
 
 private:
+    // The plot geometry and the visible rounds for the current size and series.
+    struct Layout
+    {
+        int left = 0;
+        int right = 0;
+        int top = 0;
+        int bottom = 0;     // the zero line
+        double plotW = 0.0;
+        double plotH = 0.0;
+        bool empty = true;  // no series has a sample
+        int span = 2;       // rounds in the window
+        int startRound = 0; // the round at the left edge
+        double ceiling = 10.0;
+
+        double x(int round) const { return left + (round - startRound) * plotW / (span - 1); }
+        double y(float ms) const { return bottom - ms / ceiling * plotH; }
+    };
+
+    Layout layout() const;
+
     QList<Series> m_series;
     int m_highlight = -1;
     bool m_legendVisible = false;
