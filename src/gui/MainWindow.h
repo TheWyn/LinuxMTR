@@ -16,8 +16,10 @@ class QLabel;
 class QModelIndex;
 class QPoint;
 class QPushButton;
+class QSplitter;
 class QStringListModel;
 class QTableView;
+class HopGraphWidget;
 class HopTableModel;
 
 // The WinMTR main dialog as a Qt main window. TraceSession signals drive all
@@ -54,6 +56,9 @@ private:
     void addToLru(const QString &host);
     void clearHistory();
     void setStatusText(const QString &text);
+    // Shows or hides the route graph under the table; does not save it.
+    void setShowGraph(bool show);
+    void refreshGraph();
     void startFromHostBox();
     void beginTrace(const QString &host);
 
@@ -85,7 +90,9 @@ private:
     QStringListModel *m_completionModel = nullptr;
     QPushButton *m_startButton = nullptr;
     QPushButton *m_optionsButton = nullptr;
+    QSplitter *m_splitter = nullptr;
     QTableView *m_table = nullptr;
+    HopGraphWidget *m_graph = nullptr;
     QAction *m_copyHostAction = nullptr;
     QAction *m_copyAddressAction = nullptr;
     QLabel *m_statusLabel = nullptr;
@@ -93,6 +100,7 @@ private:
     TraceOptions m_options;
     int m_maxLru = 128;
     bool m_showIps = true;
+    bool m_showGraph = false;
     QStringList m_lru;
     QString m_pendingLruHost;   // host of the trace that has not resolved yet
     QString m_currentHost;

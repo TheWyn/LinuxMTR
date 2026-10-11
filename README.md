@@ -17,13 +17,15 @@ Binary `linmtr` · licence GPL-2.0-only
   them to a file, also while a trace runs.
 - Host history (most recently used list) in the host box.
 - The WinMTR **Options** dialog (interval, ping size, LRU size, name resolution). It adds
-  **Show IP next to hostname** and a **Probing** group: protocol, TCP port, IP version,
-  reply timeout and max hops.
+  **Show IP next to hostname**, **Show route graph** and a **Probing** group: protocol,
+  TCP port, IP version, reply timeout and max hops.
 - Host name and IP address together, for example `one.one.one.one (1.1.1.1)`, in the
   table and in the reports (on by default in the GUI; `-b` on the command line).
 - Copy one hop: **Ctrl+C** in the hop table, or the right-click menu (**Copy hostname**,
   **Copy IP address**).
-- **Host properties** dialog: double-click a hop.
+- **Host properties** dialog: double-click a hop. It updates while the trace runs and
+  shows a graph of the round-trip times of the hop.
+- Optional route graph of all hops under the table.
 - ICMP echo probes through unprivileged ping sockets, with automatic fallback to UDP probes.
   UDP and TCP probes are also available on request.
 - IPv4 and IPv6 (WinMTR supports IPv4 only).
@@ -195,7 +197,17 @@ it copies the selected text as usual.
 
 Changes in **Options** apply to the next trace (as in WinMTR). **Resolve names** and
 **Show IP next to hostname** are exceptions: they apply immediately to the table and to
-the reports.
+the reports. **Show route graph** also applies immediately.
+
+The **Host properties** dialog shows the statistics of one hop and a graph of its
+round-trip times. It updates while the trace runs. You can open a dialog for each hop, and
+the dialogs stay open when you stop and start a trace. To show a graph of all hops under
+the table, select **Show route graph** in **Options**. Drag the bar between the table and
+the graph to change their heights. In both graphs, a line shows the round-trip time of a
+hop in each round. A line has a gap where a round has no reply, and a short tick below
+the zero line marks each lost probe. The graphs show the most recent rounds, at most
+3600 (one hour at the default interval). In the route graph, the legend gives the hop
+number of each colour, and the hop that you select in the table has a wider line.
 
 ### Command line
 
@@ -259,10 +271,12 @@ LinMTR saves its settings with `QSettings` in `~/.config/LinMTR/LinMTR.conf`
 |---|---|
 | `options/interval`, `options/pingSize`, `options/maxLru`, `options/resolveNames` | WinMTR options |
 | `options/showIps` | **Show IP next to hostname** (`true` if the key is missing) |
+| `options/showGraph` | **Show route graph** (`false` if the key is missing) |
 | `options/timeout`, `options/maxHops`, `options/ipVersion` | LinMTR probing options |
 | `options/protocol` | `icmp`, `udp` or `tcp` |
 | `options/tcpPort` | TCP probe port (`80` if the key is missing) |
 | `ui/geometry` | window size and position |
+| `ui/graphSplitter` | heights of the hop table and the route graph |
 | `lru/hosts` | host history |
 
 Delete the file to restore the defaults.
@@ -285,9 +299,10 @@ order and report layout. Its internals are new and designed for Linux.
 | Loss % | The WinMTR integer formula `100 - 100*recv/sent`, but only over probes that got a reply or timed out | Same formula; probes still in flight count as lost |
 | Reply timeout | 3.0 s by default, configurable | Fixed 5 s |
 | Defaults | Interval 1.0 s, ping size 64, LRU 128, DNS on, max hops 30 | Same |
-| New options | **Max hops**, **Protocol**, **TCP port**, **IP version**, **Reply timeout**, **Show IP next to hostname** | None |
+| New options | **Max hops**, **Protocol**, **TCP port**, **IP version**, **Reply timeout**, **Show IP next to hostname**, **Show route graph** | None |
 | About | An about label in **Options** | **License and Credits** dialog |
-| Host properties | A hop without an address shows its real statistics and `No response from host`. For an ICMP error, the error text is the comment and **Name** shows the host name or address. | Zeros and an empty comment; the error text is **Name** and the comment is `Host alive.` |
+| Host properties | Non-modal; it updates while the trace runs. A hop without an address shows its real statistics and `No response from host`. For an ICMP error, the error text is the comment and **Name** shows the host name or address. | A modal snapshot. Zeros and an empty comment; the error text is **Name** and the comment is `Host alive.` |
+| Graphs | Per-hop graph in Host properties; optional route graph under the table | None |
 | Host history | Newest first; a host that you trace again moves to the top. A host goes in only after its name resolved, as in WinMTR. | New hosts at the end, no reordering |
 | Reports | Same layout; title `LinMTR statistics` (same length as `WinMTR statistics`, so columns align); `\n` line endings | `\r\n` line endings |
 | Export file name | `linmtr-<host>.txt` or `.html` suggested | None |

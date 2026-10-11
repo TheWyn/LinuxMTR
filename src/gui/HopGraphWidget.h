@@ -35,6 +35,10 @@ public:
     // less than maxMs.
     static double niceCeiling(double maxMs);
 
+    // The colour for index from a palette of 10 colours; index 10 gets the
+    // colour of index 0 again.
+    static QColor seriesColor(int index);
+
     QSize minimumSizeHint() const override;
 
 protected:

@@ -3,6 +3,7 @@
 
 #include "gui/MainWindow.h"
 
+#include "gui/HopGraphWidget.h"
 #include "gui/HopPropertiesDialog.h"
 #include "gui/HopTableModel.h"
 #include "gui/OptionsDialog.h"
@@ -31,6 +32,7 @@
 #include <QSaveFile>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QSplitter>
 #include <QStatusBar>
 #include <QStringListModel>
 #include <QTableView>
@@ -50,12 +52,14 @@ const QString kKeyPingSize = QStringLiteral("options/pingSize");
 const QString kKeyMaxLru = QStringLiteral("options/maxLru");
 const QString kKeyResolveNames = QStringLiteral("options/resolveNames");
 const QString kKeyShowIps = QStringLiteral("options/showIps");
+const QString kKeyShowGraph = QStringLiteral("options/showGraph");
 const QString kKeyTimeout = QStringLiteral("options/timeout");
 const QString kKeyMaxHops = QStringLiteral("options/maxHops");
 const QString kKeyProtocol = QStringLiteral("options/protocol");
 const QString kKeyTcpPort = QStringLiteral("options/tcpPort");
 const QString kKeyIpVersion = QStringLiteral("options/ipVersion");
 const QString kKeyGeometry = QStringLiteral("ui/geometry");
+const QString kKeyGraphSplitter = QStringLiteral("ui/graphSplitter");
 const QString kKeyLruHosts = QStringLiteral("lru/hosts");
 
 // Upstream IDS_STRING_CLEAR_HISTORY: always the last entry of the host box.
@@ -191,7 +195,11 @@ void MainWindow::buildUi()
     reportLayout->addWidget(exportHtmlButton);
 
     m_model = new HopTableModel(this);
-    m_table = new QTableView(central);
+    m_splitter = new QSplitter(Qt::Vertical, central);
+    // A saved state can hold 0 for a graph that was never laid out; a
+    // collapsible graph would then stay at height 0 when the option is on.
+    m_splitter->setChildrenCollapsible(false);
+    m_table = new QTableView(m_splitter);
     m_table->setModel(m_model);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -220,10 +228,15 @@ void MainWindow::buildUi()
     m_copyAddressAction = new QAction(tr("Copy IP address"), m_table);
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
 
+    m_graph = new HopGraphWidget(m_splitter);
+    m_graph->setLegendVisible(true);
+    // Only the table takes height changes, so that a restored graph keeps its saved height.
+    m_splitter->setStretchFactor(0, 1);
+
     auto *root = new QVBoxLayout(central);
     root->addLayout(row1);
     root->addWidget(reportBox);
-    root->addWidget(m_table, 1);
+    root->addWidget(m_splitter, 1);
     setCentralWidget(central);
 
     // Status bar: stretching message pane plus the permanent hint.
@@ -247,6 +260,11 @@ void MainWindow::buildUi()
     connect(m_table, &QWidget::customContextMenuRequested, this, &MainWindow::onTableContextMenu);
     connect(m_copyHostAction, &QAction::triggered, this, &MainWindow::copySelectedHost);
     connect(m_copyAddressAction, &QAction::triggered, this, &MainWindow::copySelectedAddress);
+    connect(m_model, &QAbstractItemModel::dataChanged, this, &MainWindow::refreshGraph);
+    connect(m_model, &QAbstractItemModel::rowsInserted, this, &MainWindow::refreshGraph);
+    connect(m_model, &QAbstractItemModel::rowsRemoved, this, &MainWindow::refreshGraph);
+    connect(m_table->selectionModel(), &QItemSelectionModel::currentRowChanged,
+            this, &MainWindow::refreshGraph);
 }
 
 void MainWindow::loadSettings()
@@ -262,6 +280,7 @@ void MainWindow::loadSettings()
                        OptionsDialog::kMaxLruMin, OptionsDialog::kMaxLruMax);
     m_options.resolveNames = s.value(kKeyResolveNames, def.resolveNames).toBool();
     m_showIps = s.value(kKeyShowIps, OptionsDialog::kDefaultShowIps).toBool();
+    m_showGraph = s.value(kKeyShowGraph, false).toBool();
     m_options.timeoutSec = readDouble(s, kKeyTimeout, def.timeoutSec,
                                       OptionsDialog::kTimeoutMin, OptionsDialog::kTimeoutMax);
     m_options.maxHops = readInt(s, kKeyMaxHops, def.maxHops,
@@ -300,8 +319,10 @@ void MainWindow::loadSettings()
 
     m_model->setResolveNames(m_options.resolveNames);
     m_model->setShowIps(m_showIps);
+    setShowGraph(m_showGraph);
 
     restoreGeometry(s.value(kKeyGeometry).toByteArray());
+    m_splitter->restoreState(s.value(kKeyGraphSplitter).toByteArray());
 }
 
 void MainWindow::saveOptions() const
@@ -312,6 +333,7 @@ void MainWindow::saveOptions() const
     s.setValue(kKeyMaxLru, m_maxLru);
     s.setValue(kKeyResolveNames, m_options.resolveNames);
     s.setValue(kKeyShowIps, m_showIps);
+    s.setValue(kKeyShowGraph, m_showGraph);
     s.setValue(kKeyTimeout, m_options.timeoutSec);
     s.setValue(kKeyMaxHops, m_options.maxHops);
     s.setValue(kKeyProtocol, protocolKey(m_options.protocol));
@@ -380,6 +402,22 @@ void MainWindow::setShowIps(bool show)
     m_model->setShowIps(show);
 }
 
+void MainWindow::setShowGraph(bool show)
+{
+    m_showGraph = show;
+    m_graph->setVisible(show);
+}
+
+void MainWindow::refreshGraph()
+{
+    QList<HopGraphWidget::Series> series;
+    for (const HopStats &hop : m_model->hops()) {
+        series.append({QString::number(hop.ttl), HopGraphWidget::seriesColor(hop.ttl - 1),
+                       hop.history});
+    }
+    m_graph->setSeries(series, m_table->currentIndex().row());
+}
+
 void MainWindow::startTrace(const QString &host)
 {
     // Stop before beginTrace() sets its pending state, so that the Idle signal
@@ -440,7 +478,7 @@ void MainWindow::onHostActivated(int index)
 
 void MainWindow::onOptionsClicked()
 {
-    OptionsDialog dlg(m_options, m_maxLru, m_showIps, this);
+    OptionsDialog dlg(m_options, m_maxLru, m_showIps, m_showGraph, this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
@@ -448,6 +486,7 @@ void MainWindow::onOptionsClicked()
     m_maxLru = dlg.maxLru();
     m_model->setResolveNames(m_options.resolveNames);
     setShowIps(dlg.showIps());
+    setShowGraph(dlg.showGraph());
     saveOptions();
 
     if (m_lru.size() > m_maxLru) {
@@ -641,5 +680,6 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_session->stop();
     QSettings s;
     s.setValue(kKeyGeometry, saveGeometry());
+    s.setValue(kKeyGraphSplitter, m_splitter->saveState());
     QMainWindow::closeEvent(event);
 }

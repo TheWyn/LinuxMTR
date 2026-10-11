@@ -22,7 +22,7 @@
 #endif
 
 OptionsDialog::OptionsDialog(const TraceOptions &options, int maxLru, bool showIps,
-                             QWidget *parent)
+                             bool showGraph, QWidget *parent)
     : QDialog(parent)
     , m_base(options)
 {
@@ -72,6 +72,9 @@ OptionsDialog::OptionsDialog(const TraceOptions &options, int maxLru, bool showI
     m_showIps = new QCheckBox(tr("Show IP next to hostname"), mainBox);
     m_showIps->setChecked(showIps);
 
+    m_showGraph = new QCheckBox(tr("Show route graph"), mainBox);
+    m_showGraph->setChecked(showGraph);
+
     auto *intervalLabel = new QLabel(tr("Interval (sec):"), mainBox);
     intervalLabel->setBuddy(m_interval);
     auto *pingSizeLabel = new QLabel(tr("Ping size (bytes):"), mainBox);
@@ -87,6 +90,7 @@ OptionsDialog::OptionsDialog(const TraceOptions &options, int maxLru, bool showI
     mainGrid->addWidget(m_maxLru, 1, 1);
     mainGrid->addWidget(m_resolveNames, 1, 2, 1, 2);
     mainGrid->addWidget(m_showIps, 2, 2, 1, 2);
+    mainGrid->addWidget(m_showGraph, 3, 2, 1, 2);
     mainGrid->setColumnStretch(1, 1);
     mainGrid->setColumnStretch(3, 1);
 
@@ -196,4 +200,9 @@ int OptionsDialog::maxLru() const
 bool OptionsDialog::showIps() const
 {
     return m_showIps->isChecked();
+}
+
+bool OptionsDialog::showGraph() const
+{
+    return m_showGraph->isChecked();
 }

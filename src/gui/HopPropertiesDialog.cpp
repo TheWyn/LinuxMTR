@@ -145,5 +145,6 @@ void HopPropertiesDialog::refresh()
     setField(m_best, pingText(hop.bestMs));
     setField(m_average, pingText(hop.averageMs()));
     setField(m_worst, pingText(hop.worstMs));
-    m_graph->setSeries({{QString::number(hop.ttl), QColor(0x4e79a7), hop.history}});
+    m_graph->setSeries({{QString::number(hop.ttl), HopGraphWidget::seriesColor(hop.ttl - 1),
+                         hop.history}});
 }

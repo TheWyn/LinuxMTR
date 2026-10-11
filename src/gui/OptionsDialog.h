@@ -33,12 +33,13 @@ public:
     static constexpr int kTcpPortMax = 65535;
     static constexpr bool kDefaultShowIps = true;   // upstream issue #4
 
-    OptionsDialog(const TraceOptions &options, int maxLru, bool showIps,
+    OptionsDialog(const TraceOptions &options, int maxLru, bool showIps, bool showGraph,
                   QWidget *parent = nullptr);
 
     TraceOptions options() const;
     int maxLru() const;
     bool showIps() const;
+    bool showGraph() const;
 
 private:
     TraceOptions m_base;
@@ -47,6 +48,7 @@ private:
     QSpinBox *m_maxLru = nullptr;
     QCheckBox *m_resolveNames = nullptr;
     QCheckBox *m_showIps = nullptr;
+    QCheckBox *m_showGraph = nullptr;
     QComboBox *m_protocol = nullptr;
     QSpinBox *m_tcpPort = nullptr;
     QComboBox *m_ipVersion = nullptr;

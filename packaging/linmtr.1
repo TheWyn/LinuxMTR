@@ -327,6 +327,10 @@ from the command line, also when it is
 Double\-click a row to open the
 .B Host properties
 dialog for that hop.
+The dialog shows a graph of the round\-trip times of the hop and updates
+while the trace runs.
+In the graph, a gap in the line is a round without a reply, and a short tick
+below the zero line is a lost probe.
 .PP
 To copy one hop, select its row and press
 .BR Ctrl+C .
@@ -350,10 +354,13 @@ dialog sets the values for traces started from the window:
 .BR "Interval (sec)" ,
 .BR "Ping size (bytes)" ,
 .BR "Max. hosts in LRU list" ,
-.B Resolve names
-and
+.BR "Resolve names" ,
 .B Show IP next to hostname
-(on by default).
+(on by default) and
+.B Show route graph
+(off by default).
+.B Show route graph
+shows a graph of the round\-trip times of all hops under the table.
 Its
 .B Probing
 group has
@@ -369,6 +376,8 @@ New values apply to the next trace.
 and
 .B Show IP next to hostname
 are exceptions: they apply immediately to the table and to the reports.
+.B Show route graph
+also applies immediately.
 .SH UNPRIVILEGED PROBING
 By default,
 .B linmtr
@@ -499,7 +508,8 @@ and
 .I $XDG_CONFIG_HOME/LinMTR/LinMTR.conf
 GUI settings: the
 .B Options
-dialog values, the window geometry and the list of recent hosts.
+dialog values, the window geometry, the height of the route graph and the list
+of recent hosts.
 If
 .B XDG_CONFIG_HOME
 is not set, the file is

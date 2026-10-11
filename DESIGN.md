@@ -25,6 +25,7 @@ contains no Windows code. The literal UI and report strings are copies on purpos
 | Defaults | Interval 1.0 s, ping size 64, LRU 128, DNS on, max hops 30 (all upstream). |
 | Reports | The upstream layout byte for byte, with `WinMTR statistics` changed to `LinMTR statistics` (same length, so the alignment stays). `\n` line endings (upstream `\r\n`). |
 | Settings | QSettings, organization and application `LinMTR` (`~/.config/LinMTR/LinMTR.conf`). |
+| Graphs | `HopGraphWidget` draws `HopStats::history`: a live graph of one hop in Host properties, and an optional route graph of all hops under the table. Upstream has no graph. |
 
 ## 2. API contract
 
@@ -124,9 +125,10 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
 Labels, mnemonics and button texts are verbatim upstream (`WinMTR.rc`).
 
 - Main window: the upstream layout. Row 1: the host box, `&Start` (`&Stop` while a trace
-  runs), `&Options`, `E&xit`. Row 2: copy and export. Below: the hop table and the status
-  bar. While a trace runs, the host box and Options stay disabled; copy
-  and export still work. Only `hopsChanged` and `stateChanged` refresh the GUI.
+  runs), `&Options`, `E&xit`. Row 2: copy and export. Below: the hop table, the optional
+  route graph (see Route graph) and the status bar. While a trace runs, the host box and
+  Options stay disabled; copy and export still work. Only `hopsChanged` and `stateChanged`
+  refresh the GUI.
 - Table cells show integers (`sprintf("%d")`); Loss % has no `%` suffix.
 - `Clear History` (IDS_STRING_CLEAR_HISTORY) is always the last combo entry. Selecting it, or
   a start with that text (case-insensitive), empties the history without confirmation, as
@@ -135,11 +137,19 @@ Labels, mnemonics and button texts are verbatim upstream (`WinMTR.rc`).
   duplicates, at most `maxLru` entries. Upstream also waits for `InitMTRNet()` to succeed.
 - Hop copy (issue #10): Ctrl+C copies the Hostname text of the selected hop. The shortcut
   applies only to the table, so Ctrl+C in the host box copies text as usual.
-- Options dialog: the upstream fields, then `Show IP next to hostname` (issue #4) and the
-  `Probing` group. `OptionsDialog.h` holds the ranges, which the settings loader and the CLI
-  also use. New values apply to the next trace, except `Resolve names` and
-  `Show IP next to hostname`, which apply immediately.
-- Host properties dialog: a static, read-only snapshot of one hop; §8 lists its deviations.
+- Options dialog: the upstream fields, then `Show IP next to hostname` (issue #4),
+  `Show route graph` and the `Probing` group. `OptionsDialog.h` holds the ranges, which the
+  settings loader and the CLI also use. New values apply to the next trace, except
+  `Resolve names`, `Show IP next to hostname` and `Show route graph`, which apply immediately.
+- Host properties dialog: read-only and non-modal. Each double-click opens a new dialog, so
+  more than one can be open. The dialog follows its hop by TTL through the `HopTableModel`
+  signals, also after Stop and Start. When no row has that TTL, it keeps the last values.
+  Below the statistics, a `HopGraphWidget` shows the hop history. §8 lists the deviations.
+- Route graph: a `HopGraphWidget` with a legend under the table, in a vertical `QSplitter`.
+  It has one line per table row, with the colour `seriesColor(ttl - 1)` from a palette
+  of 10 colours. The line of the current row is wider and on top. `Show route graph`
+  (`options/showGraph`, off by default) shows the graph; when it is hidden, the table uses
+  the full height. `ui/graphSplitter` keeps the splitter state.
 
 ## 5. Report formats (`ReportBuilder`, shared by GUI and CLI)
 
@@ -231,3 +241,7 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
 10. Host history: newest first, without duplicates (upstream appends new hosts at the end).
 11. The export dialog suggests `linmtr-<host>.txt` or `.html` from the traced host; upstream
     suggests no name.
+12. Host properties is non-modal, updates while the trace runs and shows a graph of the hop
+    round-trip times. Upstream shows a static modal snapshot.
+13. The route graph under the table and the `Show route graph` option are new; upstream has
+    no graph.

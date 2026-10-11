@@ -7,6 +7,7 @@
 #include <QPolygonF>
 
 #include <algorithm>
+#include <array>
 #include <limits>
 
 namespace {
@@ -17,6 +18,12 @@ constexpr int kMarginTop = 8;
 constexpr int kLegendHeight = 16;
 constexpr int kMarginBottom = 18;   // lost-probe ticks
 constexpr int kMinRounds = 60;
+
+// The Tableau 10 palette: ten hues that are easy to tell apart.
+constexpr std::array<QRgb, 10> kPalette = {
+    0x4e79a7, 0xf28e2b, 0xe15759, 0x76b7b2, 0x59a14f,
+    0xedc948, 0xb07aa1, 0xff9da7, 0x9c755f, 0xbab0ac
+};
 
 } // namespace
 
@@ -49,6 +56,12 @@ double HopGraphWidget::niceCeiling(double maxMs)
                 return decade * step;
         }
     }
+}
+
+QColor HopGraphWidget::seriesColor(int index)
+{
+    const int n = static_cast<int>(kPalette.size());
+    return QColor(kPalette[static_cast<size_t>((index % n + n) % n)]);
 }
 
 QSize HopGraphWidget::minimumSizeHint() const
