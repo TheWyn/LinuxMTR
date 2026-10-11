@@ -5,14 +5,34 @@
 
 #include <QDialog>
 
-#include "core/HopStats.h"
+class QLineEdit;
+class HopGraphWidget;
+class HopTableModel;
 
-// WinMTR "Host properties" dialog: a static, read-only snapshot of one hop.
-// The address has its own field, so the name field never repeats it.
+// WinMTR "Host properties" dialog for one hop, with a graph of its round-trip
+// times. It follows the hop by TTL while the model changes; when no row has
+// that TTL, it keeps the last values. The address has its own field, so the
+// name field never repeats it.
 class HopPropertiesDialog : public QDialog
 {
     Q_OBJECT
 public:
-    HopPropertiesDialog(const HopStats &hop, bool resolveNames, bool showIps,
-                        QWidget *parent = nullptr);
+    HopPropertiesDialog(HopTableModel *model, int row, QWidget *parent = nullptr);
+
+private:
+    void refresh();
+
+    HopTableModel *m_model = nullptr;
+    int m_ttl = 0;
+    QLineEdit *m_name = nullptr;
+    QLineEdit *m_ip = nullptr;
+    QLineEdit *m_comment = nullptr;
+    QLineEdit *m_sent = nullptr;
+    QLineEdit *m_received = nullptr;
+    QLineEdit *m_loss = nullptr;
+    QLineEdit *m_last = nullptr;
+    QLineEdit *m_best = nullptr;
+    QLineEdit *m_average = nullptr;
+    QLineEdit *m_worst = nullptr;
+    HopGraphWidget *m_graph = nullptr;
 };

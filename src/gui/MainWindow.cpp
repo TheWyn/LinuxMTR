@@ -516,9 +516,9 @@ void MainWindow::onRowDoubleClicked(const QModelIndex &index)
 {
     if (!index.isValid() || index.row() >= m_model->rowCount())
         return;
-    HopPropertiesDialog dlg(m_model->hopAt(index.row()), m_model->resolveNames(),
-                            m_model->showIps(), this);
-    dlg.exec();
+    auto *dlg = new HopPropertiesDialog(m_model, index.row(), this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->show();
 }
 
 void MainWindow::onTableContextMenu(const QPoint &pos)

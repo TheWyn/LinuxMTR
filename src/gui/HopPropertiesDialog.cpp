@@ -3,6 +3,9 @@
 
 #include "gui/HopPropertiesDialog.h"
 
+#include "gui/HopGraphWidget.h"
+#include "gui/HopTableModel.h"
+
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGridLayout>
@@ -13,15 +16,25 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 namespace {
 
-QLineEdit *readOnlyField(const QString &text, QWidget *parent, Qt::Alignment align = Qt::AlignRight)
+QLineEdit *readOnlyField(QWidget *parent, Qt::Alignment align = Qt::AlignRight)
 {
-    auto *edit = new QLineEdit(text, parent);
+    auto *edit = new QLineEdit(parent);
     edit->setReadOnly(true);
     edit->setAlignment(align);
-    edit->setCursorPosition(0);
     return edit;
+}
+
+// An unchanged field keeps its text, so that a refresh keeps the selection.
+void setField(QLineEdit *edit, const QString &text)
+{
+    if (edit->text() == text)
+        return;
+    edit->setText(text);
+    edit->setCursorPosition(0);
 }
 
 QString pingText(double ms)
@@ -32,52 +45,51 @@ QString pingText(double ms)
 
 } // namespace
 
-HopPropertiesDialog::HopPropertiesDialog(const HopStats &hop, bool resolveNames, bool showIps,
-                                         QWidget *parent)
+HopPropertiesDialog::HopPropertiesDialog(HopTableModel *model, int row, QWidget *parent)
     : QDialog(parent)
+    , m_model(model)
+    , m_ttl(model->hopAt(row).ttl)
 {
     setWindowTitle(tr("Host properties"));
 
-    // A hop without an address shows an empty name and IP, and the display text
-    // as comment. A responding hop shows its name and IP, and "Host alive." or
-    // its ICMP error text as comment. Both cases deviate from upstream on purpose.
-    QString name;
-    QString ip;
-    QString comment;
-    if (hop.address.isNull()) {
-        comment = hop.displayHost(resolveNames, showIps);
-    } else {
-        ip = hop.address.toString();
-        name = (resolveNames && !hop.hostname.isEmpty()) ? hop.hostname : ip;
-        comment = hop.errorText.isEmpty() ? QStringLiteral("Host alive.") : hop.errorText;
-    }
-
     auto *hostBox = new QGroupBox(tr("Host"), this);
     auto *hostGrid = new QGridLayout(hostBox);
-    auto *nameEdit = readOnlyField(name, hostBox);
-    nameEdit->setMinimumWidth(240);
+    m_name = readOnlyField(hostBox);
+    m_name->setMinimumWidth(240);
+    m_ip = readOnlyField(hostBox);
+    m_comment = readOnlyField(hostBox, Qt::AlignLeft);
     hostGrid->addWidget(new QLabel(tr("Name:"), hostBox), 0, 0);
-    hostGrid->addWidget(nameEdit, 0, 1);
+    hostGrid->addWidget(m_name, 0, 1);
     hostGrid->addWidget(new QLabel(tr("IP Address:"), hostBox), 1, 0);
-    hostGrid->addWidget(readOnlyField(ip, hostBox), 1, 1);
-    hostGrid->addWidget(readOnlyField(comment, hostBox, Qt::AlignLeft), 2, 0, 1, 2);
+    hostGrid->addWidget(m_ip, 1, 1);
+    hostGrid->addWidget(m_comment, 2, 0, 1, 2);
 
     auto *packetsBox = new QGroupBox(tr("Packets"), this);
     auto *packetsForm = new QFormLayout(packetsBox);
-    packetsForm->addRow(tr("Sent:"), readOnlyField(QString::number(hop.sent), packetsBox));
-    packetsForm->addRow(tr("Received:"), readOnlyField(QString::number(hop.received), packetsBox));
-    packetsForm->addRow(tr("Loss (%):"), readOnlyField(QString::number(hop.lossPercent()), packetsBox));
+    m_sent = readOnlyField(packetsBox);
+    m_received = readOnlyField(packetsBox);
+    m_loss = readOnlyField(packetsBox);
+    packetsForm->addRow(tr("Sent:"), m_sent);
+    packetsForm->addRow(tr("Received:"), m_received);
+    packetsForm->addRow(tr("Loss (%):"), m_loss);
 
     auto *pingBox = new QGroupBox(tr("Ping time"), this);
     auto *pingForm = new QFormLayout(pingBox);
-    pingForm->addRow(tr("Last:"), readOnlyField(pingText(hop.lastMs), pingBox));
-    pingForm->addRow(tr("Best:"), readOnlyField(pingText(hop.bestMs), pingBox));
-    pingForm->addRow(tr("Average:"), readOnlyField(pingText(hop.averageMs()), pingBox));
-    pingForm->addRow(tr("Worst:"), readOnlyField(pingText(hop.worstMs), pingBox));
+    m_last = readOnlyField(pingBox);
+    m_best = readOnlyField(pingBox);
+    m_average = readOnlyField(pingBox);
+    m_worst = readOnlyField(pingBox);
+    pingForm->addRow(tr("Last:"), m_last);
+    pingForm->addRow(tr("Best:"), m_best);
+    pingForm->addRow(tr("Average:"), m_average);
+    pingForm->addRow(tr("Worst:"), m_worst);
 
     auto *statsRow = new QHBoxLayout;
     statsRow->addWidget(packetsBox);
     statsRow->addWidget(pingBox);
+
+    m_graph = new HopGraphWidget(this);
+    m_graph->setMinimumHeight(140);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok, Qt::Horizontal, this);
     buttons->button(QDialogButtonBox::Ok)->setText(tr("OK"));
@@ -88,8 +100,50 @@ HopPropertiesDialog::HopPropertiesDialog(const HopStats &hop, bool resolveNames,
     auto *layout = new QVBoxLayout(this);
     layout->addWidget(hostBox);
     layout->addLayout(statsRow);
+    layout->addWidget(m_graph, 1);
     layout->addWidget(buttons);
-    layout->setSizeConstraint(QLayout::SetFixedSize);
+
+    // HopTableModel emits these for changed and new rows. A removed row needs
+    // no refresh: the dialog keeps the last values of a hop that left.
+    connect(model, &QAbstractItemModel::dataChanged, this, &HopPropertiesDialog::refresh);
+    connect(model, &QAbstractItemModel::rowsInserted, this, &HopPropertiesDialog::refresh);
+    refresh();
 
     buttons->button(QDialogButtonBox::Ok)->setFocus();
+}
+
+void HopPropertiesDialog::refresh()
+{
+    const QList<HopStats> &hops = m_model->hops();
+    const auto it = std::find_if(hops.cbegin(), hops.cend(),
+                                 [this](const HopStats &h) { return h.ttl == m_ttl; });
+    if (it == hops.cend())
+        return;
+    const HopStats &hop = *it;
+
+    // A hop without an address shows an empty name and IP, and the display text
+    // as comment. A responding hop shows its name and IP, and "Host alive." or
+    // its ICMP error text as comment. Both cases deviate from upstream on purpose.
+    QString name;
+    QString ip;
+    QString comment;
+    if (hop.address.isNull()) {
+        comment = hop.displayHost(m_model->resolveNames(), m_model->showIps());
+    } else {
+        ip = hop.address.toString();
+        name = (m_model->resolveNames() && !hop.hostname.isEmpty()) ? hop.hostname : ip;
+        comment = hop.errorText.isEmpty() ? QStringLiteral("Host alive.") : hop.errorText;
+    }
+
+    setField(m_name, name);
+    setField(m_ip, ip);
+    setField(m_comment, comment);
+    setField(m_sent, QString::number(hop.sent));
+    setField(m_received, QString::number(hop.received));
+    setField(m_loss, QString::number(hop.lossPercent()));
+    setField(m_last, pingText(hop.lastMs));
+    setField(m_best, pingText(hop.bestMs));
+    setField(m_average, pingText(hop.averageMs()));
+    setField(m_worst, pingText(hop.worstMs));
+    m_graph->setSeries({{QString::number(hop.ttl), QColor(0x4e79a7), hop.history}});
 }
