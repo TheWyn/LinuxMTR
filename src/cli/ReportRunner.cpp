@@ -5,12 +5,34 @@
 
 #include "gui/ReportBuilder.h"
 
+#include <QSocketNotifier>
 #include <QTimer>
 
+#include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <limits>
 
+#include <sys/socket.h>
+#include <unistd.h>
+
 namespace {
+
+// Self-pipe: the signal handler writes one byte, a QSocketNotifier reads it.
+int g_signalFds[2] = {-1, -1};
+constexpr int kStopSignals[] = {SIGINT, SIGTERM, SIGHUP};
+
+void onSignal(int)
+{
+    const int savedErrno = errno;
+    const char byte = 0;
+    // Only async-signal-safe calls here. A second signal of any kind ends the process.
+    for (int sig : kStopSignals)
+        ::signal(sig, SIG_DFL);
+    // A full socket already holds a byte.
+    [[maybe_unused]] const ssize_t n = ::write(g_signalFds[1], &byte, 1);
+    errno = savedErrno;
+}
 
 void writeTo(FILE *stream, const QString &text)
 {
@@ -33,11 +55,12 @@ ReportRunner::ReportRunner(const QString &host, const TraceOptions &options, int
     , m_watchdog(new QTimer(this))
     , m_host(host)
     , m_options(options)
-    , m_cycles(cycles < 1 ? 1 : cycles)
+    , m_cycles(cycles < 0 ? 0 : cycles)
     , m_showIps(showIps)
 {
     // Send exactly m_cycles rounds and wait for them, so that Sent equals
     // --cycles and no probe is still in flight when the report prints.
+    // 0 is unlimited: the trace runs until a signal.
     m_options.maxRounds = m_cycles;
     m_watchdog->setSingleShot(true);
     connect(m_watchdog, &QTimer::timeout, this, &ReportRunner::onWatchdog);
@@ -52,10 +75,30 @@ ReportRunner::~ReportRunner()
     disconnect(m_session, nullptr, this, nullptr);
     delete m_session;
     m_session = nullptr;
+    if (m_signalNotifier) {
+        for (int sig : kStopSignals)
+            std::signal(sig, SIG_DFL);
+        delete m_signalNotifier;
+        m_signalNotifier = nullptr;
+        ::close(g_signalFds[0]);
+        ::close(g_signalFds[1]);
+        g_signalFds[0] = g_signalFds[1] = -1;
+    }
 }
 
 void ReportRunner::start()
 {
+    // Without the socket pair, the signals keep their default action.
+    if (!m_signalNotifier
+        && ::socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, g_signalFds) == 0) {
+        m_signalNotifier = new QSocketNotifier(g_signalFds[0], QSocketNotifier::Read, this);
+        connect(m_signalNotifier, &QSocketNotifier::activated, this, &ReportRunner::onStopSignal);
+        struct sigaction action = {};
+        action.sa_handler = onSignal;
+        sigemptyset(&action.sa_mask);
+        for (int sig : kStopSignals)
+            ::sigaction(sig, &action, nullptr);
+    }
     m_session->start(m_host, m_options);
 }
 
@@ -65,6 +108,8 @@ void ReportRunner::onStateChanged(TraceSession::State state)
         return;
 
     if (state == TraceSession::State::Tracing) {
+        if (m_cycles == 0)
+            return; // runs until a signal: no time limit
         // Guard against a stalled engine: all rounds resolve within
         // cycles * interval + timeout. The watchdog adds 10 s of slack.
         const double ms = (m_cycles * m_options.intervalSec + m_options.timeoutSec) * 1000.0
@@ -91,7 +136,7 @@ void ReportRunner::onStateChanged(TraceSession::State state)
 
 void ReportRunner::onRoundCompleted(int rounds)
 {
-    if (m_done || rounds < m_cycles)
+    if (m_done || m_cycles == 0 || rounds < m_cycles)
         return;
     printReport();
     finish(Success);
@@ -118,6 +163,17 @@ void ReportRunner::onWatchdog()
     printError(QStringLiteral("timed out waiting for %1 rounds (%2 completed)")
                    .arg(m_cycles)
                    .arg(m_session->roundsCompleted()));
+    printReport();
+    finish(Success);
+}
+
+void ReportRunner::onStopSignal()
+{
+    char buffer[16];
+    while (::read(g_signalFds[0], buffer, sizeof(buffer)) > 0) {
+    }
+    if (m_done)
+        return;
     printReport();
     finish(Success);
 }

@@ -5,6 +5,8 @@
 #include <QtTest>
 
 #include <cerrno>
+#include <csignal>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -15,6 +17,7 @@
 
 #include <linux/errqueue.h>
 
+#include "cli/ReportRunner.h"
 #include "core/Prober.h"
 #include "core/TraceSession.h"
 
@@ -129,7 +132,7 @@ QString loopbackPingUnavailable()
 } // namespace
 
 // Feeds crafted MSG_ERRQUEUE control data to decodeExtendedError(), checks the
-// classifyIcmp() table, and runs one short live trace over loopback.
+// classifyIcmp() table, and runs short live traces over loopback.
 class TestCoreParsers : public QObject
 {
     Q_OBJECT
@@ -147,6 +150,7 @@ private slots:
     void classify_data();
     void classify();
     void liveLoopbackTrace();
+    void reportRunnerStopsOnSignal();
 };
 
 void TestCoreParsers::decodeValidV4()
@@ -478,6 +482,57 @@ void TestCoreParsers::liveLoopbackTrace()
     QCOMPARE(session.roundsCompleted(), 3);
     QCOMPARE(session.hops().constFirst().sent, quint64(3));
     session.stop();
+}
+
+// Report mode with -c 0 runs until a signal, then prints the report and exits
+// with 0. Without the runner's handler, raise(SIGINT) ends the test process.
+void TestCoreParsers::reportRunnerStopsOnSignal()
+{
+    if (const QString reason = loopbackPingUnavailable(); !reason.isEmpty())
+        QSKIP(qPrintable(reason));
+
+    TraceOptions options;
+    options.protocol = TraceOptions::Protocol::Icmp;
+    options.intervalSec = 0.2;
+    options.resolveNames = false;
+
+    ReportRunner runner(QStringLiteral("127.0.0.1"), options, 0, false);
+    QSignalSpy finished(&runner, &ReportRunner::finished);
+
+    // Send stdout to a file. No check may fail before stdout is back.
+    QTemporaryFile capture;
+    QVERIFY(capture.open());
+    std::fflush(stdout);
+    const int savedStdout = ::dup(STDOUT_FILENO);
+    QVERIFY(savedStdout >= 0);
+    ::dup2(capture.handle(), STDOUT_FILENO);
+
+    runner.start();
+    QTest::qWait(700);
+    ::raise(SIGINT);
+    const bool stopped = QTest::qWaitFor([&finished] { return !finished.isEmpty(); }, 5000);
+    struct sigaction term = {};
+    ::sigaction(SIGTERM, nullptr, &term);
+
+    std::fflush(stdout);
+    ::dup2(savedStdout, STDOUT_FILENO);
+    ::close(savedStdout);
+
+    QVERIFY(stopped);
+    // After the first signal, a second signal of another kind takes the default action.
+    QVERIFY(term.sa_handler == SIG_DFL);
+    QCOMPARE(finished.size(), 1);
+    QCOMPARE(finished.at(0).at(0).toInt(), int(ReportRunner::Success));
+
+    QFile file(capture.fileName());
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QString report = QString::fromUtf8(file.readAll());
+    QVERIFY2(report.contains(QLatin1String("LinMTR statistics")), qPrintable(report));
+    // Row: "|<host> - <loss> | <sent> | <recv> | ..."
+    const QStringList rows = report.split(QLatin1Char('\n')).filter(QLatin1String(" 127.0.0.1 - "));
+    QCOMPARE(rows.size(), 1);
+    QVERIFY2(rows.constFirst().split(QLatin1Char('|')).value(2).trimmed().toInt() >= 2,
+             qPrintable(rows.constFirst()));
 }
 
 QTEST_GUILESS_MAIN(TestCoreParsers)

@@ -88,9 +88,14 @@ Use report mode: run without a GUI, trace for
 rounds, write the text report to standard output, then exit.
 .I HOST
 is necessary in this mode.
+When
+.B linmtr
+gets SIGINT (for example from Ctrl+C), SIGTERM or SIGHUP,
+it writes the report for the rounds done so far and exits with status 0.
+A second signal ends the process at once.
 .TP
 .BI "\-c, \-\-cycles " N
-Number of probe rounds in report mode, from 1 to 1000000.
+Number of probe rounds in report mode, from 0 to 1000000.
 One round sends one probe to each hop, so a hop that gets a probe in every
 round shows
 .I N
@@ -98,6 +103,10 @@ in the
 .B Sent
 column.
 The default is 10.
+With 0,
+.B linmtr
+traces until it gets a signal (refer to
+.BR \-\-report ).
 .TP
 .B "\-n, \-\-no\-dns"
 Do not resolve hop addresses to host names (reverse DNS).
@@ -417,6 +426,11 @@ In report mode:
 .TP
 .B 0
 Success.
+This includes a trace that a signal stops (refer to
+.BR \-\-report ).
+It also includes a trace whose rounds do not complete in the expected time:
+.B linmtr
+then writes a message to standard error and the report for the rounds done so far.
 .TP
 .B 1
 .B linmtr

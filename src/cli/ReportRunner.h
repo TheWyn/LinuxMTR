@@ -9,13 +9,18 @@
 #include "core/TraceOptions.h"
 #include "core/TraceSession.h"
 
+class QSocketNotifier;
 class QTimer;
 
-// Headless --report mode: traces one host for a fixed number of rounds,
-// prints the WinMTR text report to stdout and reports an exit code.
-// cycles replaces options.maxRounds; showIps is the -b option of mtr. A
-// watchdog fires after cycles * interval + timeout + 10 s of tracing: it prints
-// the partial report and still finishes with Success.
+// Headless --report mode: traces one host for a number of rounds, prints the
+// WinMTR text report to stdout and reports an exit code. cycles replaces
+// options.maxRounds; cycles 0 traces until a signal. showIps is the -b option
+// of mtr. A watchdog fires after cycles * interval + timeout + 10 s of tracing
+// (not for cycles 0): it prints the partial report and still finishes with
+// Success. start() catches SIGINT, SIGTERM and SIGHUP: the first one prints
+// the report of the rounds so far and finishes with Success. A second signal
+// of the same kind ends the process with the default action. The signal
+// handlers are process-wide: only one runner may exist in a process.
 class ReportRunner : public QObject
 {
     Q_OBJECT
@@ -39,11 +44,13 @@ private:
     void onErrorOccurred(const QString &message);
     void onInfoMessage(const QString &message);
     void onWatchdog();
+    void onStopSignal();
     void printReport();
     void finish(int exitCode);
 
     TraceSession *m_session = nullptr;
     QTimer *m_watchdog = nullptr;
+    QSocketNotifier *m_signalNotifier = nullptr;
     QString m_host;
     TraceOptions m_options;
     int m_cycles = 10;

@@ -204,7 +204,7 @@ the reports.
 | Option | Effect |
 |---|---|
 | `--report` | Headless report mode: run `-c` rounds, print the text report to stdout, exit |
-| `-c`, `--cycles N` | Rounds in report mode (default 10) |
+| `-c`, `--cycles N` | Rounds in report mode (default 10; `0` = until a signal stops the trace) |
 | `-n`, `--no-dns` | No reverse DNS |
 | `-b`, `--show-ips` | Host name and IP address for each hop, as `mtr -b` |
 | `-4`, `-6` | IPv4 only, IPv6 only (default: the address that the resolver lists first) |
@@ -219,6 +219,11 @@ ignores the saved GUI settings, so host names show without IP addresses unless y
 give `-b`. In GUI mode, `-n`, `-b`, `-4`, `-6`, `--udp`, `--tcp`, `-P`, `-s`, `-i`,
 `--timeout` and `-m` replace the saved **Options** values for that session only.
 
+With `-c 0`, the trace in report mode continues until LinMTR gets a signal. On SIGINT
+(Ctrl+C), SIGTERM or SIGHUP, LinMTR writes the report for the rounds done so far and exits
+with status 0. A signal during a `-c N` trace has the same effect. A second signal ends
+the process at once.
+
 Examples:
 
 ```sh
@@ -227,10 +232,12 @@ linmtr --report example.com                     # 10 rounds, text report to stdo
 linmtr --report -c 30 -n example.com            # 30 rounds, no reverse DNS
 linmtr --report -6 --udp example.com > hops.txt # IPv6, UDP probes, save the report
 linmtr --report --tcp -P 443 -b example.com     # TCP to port 443, name and IP per hop
+linmtr --report -c 0 example.com > hops.txt     # until Ctrl+C
 ```
 
-Exit status in report mode: `0` success, `1` trace failure, `2` bad arguments. `man linmtr`
-gives the full reference after you install the package.
+Exit status in report mode: `0` success (also when a signal stops the trace), `1` trace
+failure, `2` bad arguments. `man linmtr` gives the full reference after you install the
+package.
 
 ### Configuration file
 

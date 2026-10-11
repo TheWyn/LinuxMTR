@@ -210,7 +210,8 @@ int main(int argc, char *argv[])
                        "report to stdout and exit."));
     const QCommandLineOption cyclesOption(
         {QStringLiteral("c"), QStringLiteral("cycles")},
-        QStringLiteral("Rounds for --report (default %1).").arg(kDefaultCycles),
+        QStringLiteral("Rounds for --report (default %1; 0 = until a signal stops the trace).")
+            .arg(kDefaultCycles),
         QStringLiteral("N"));
     const QCommandLineOption noDnsOption(
         {QStringLiteral("n"), QStringLiteral("no-dns")},
@@ -270,7 +271,7 @@ int main(int argc, char *argv[])
     Overrides ov;
     QString error;
     const bool valid =
-        parseInt(parser, cyclesOption, 1, kMaxCycles, &ov.cycles, &error)
+        parseInt(parser, cyclesOption, 0, kMaxCycles, &ov.cycles, &error)
         && parseInt(parser, sizeOption, OptionsDialog::kPingSizeMin, OptionsDialog::kPingSizeMax,
                     &ov.size, &error)
         && parseDouble(parser, intervalOption, OptionsDialog::kIntervalMin,

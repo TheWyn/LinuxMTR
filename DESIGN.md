@@ -157,7 +157,17 @@ follows, without a newline. The HTML report keeps the upstream tags (`<center><h
 - Report mode ignores the saved settings. `ReportRunner` sets `maxRounds = cycles`, prints
   the text report when `roundCompleted` reaches `cycles`, and quits. A watchdog
   (cycles * interval + timeout + 10 s) prints the partial report and exits with 0.
-- Exit codes: 0 success, 1 resolve, socket or send failure, 2 bad arguments.
+- `-c 0` gives `maxRounds = 0` (unlimited): the trace runs until a signal, without a watchdog.
+- Signals: `ReportRunner::start()` catches SIGINT, SIGTERM and SIGHUP through a self-pipe (a
+  `socketpair` and a `QSocketNotifier` on its read end). The handler restores the default
+  action for all three signals and writes one byte. The runner then prints the report of the
+  rounds done so far and exits with 0, as the watchdog does. A signal during resolution
+  prints the empty report. A second signal of any of the three kinds ends the process at
+  once, also when the report write blocks. The handlers are process-wide, so only one runner
+  can exist in a process. Its destructor restores `SIG_DFL` and closes the pair. The GUI
+  keeps the Qt defaults.
+- Exit codes: 0 success (also after the watchdog or a signal), 1 resolve, socket or send
+  failure, 2 bad arguments.
 
 ## 7. Packaging and conventions
 
