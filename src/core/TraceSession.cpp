@@ -630,6 +630,9 @@ void TraceSession::Private::finishRoundSending()
     if (it == rounds.end())
         return;
     it->second.sendingDone = true;
+    // A round with a successful send ends an outage: a later failure gets a new notice.
+    if (it->second.sendOk > 0)
+        reportedErrnos.clear();
     if (currentRound == 1 && it->second.sendOk == 0 && it->second.sendFailed > 0
         && queuedFatal.isEmpty()) {
         queuedFatal = QStringLiteral("Unable to send probes: %1").arg(qt_error_string(lastSendErrno));

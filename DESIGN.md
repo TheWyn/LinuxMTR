@@ -67,7 +67,8 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   does not count as received, as upstream. A port unreachable for UDP and TCP probes means
   target reached. A local error (`SO_EE_ORIGIN_LOCAL`) makes the probe lost at once.
 - A failed `sendto()` counts the probe as sent and timed out, with one `infoMessage` per
-  errno. When no send of the first round succeeds, the session emits `errorOccurred`.
+  errno. A round in which a send succeeded arms this notice again. When no send of the first
+  round succeeds, the session emits `errorOccurred`.
 
 ### 3.3 Scheduling and bookkeeping
 
