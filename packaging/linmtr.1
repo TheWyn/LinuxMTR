@@ -1,7 +1,7 @@
 .\" Manual page for LinMTR.
 .\" SPDX-License-Identifier: GPL-2.0-only
 .\" Copyright (C) 2026 Wyn
-.TH LINMTR 1 2026-10-10 "LinMTR 0.1.0" "User Commands"
+.TH LINMTR 1 2026-10-11 "LinMTR 0.1.0" "User Commands"
 .SH NAME
 linmtr \- WinMTR\-style traceroute and ping network diagnostic tool
 .SH SYNOPSIS
@@ -29,6 +29,12 @@ received, and the best, average, worst and last round\-trip times.
 .PP
 .I HOST
 is a host name, an IPv4 address or an IPv6 address.
+A host name with both address types traces over the address that the
+system resolver lists first (IPv6 on a host with IPv6 connectivity), unless
+.B \-4
+or
+.B \-6
+is given.
 .PP
 .B linmtr
 has two modes:

@@ -17,7 +17,7 @@ contains no Windows code. The literal UI and report strings are copies on purpos
 | Fallback | UDP probes and the `IP_RECVERR` error queue (tracepath method), automatic when ICMP sockets are not available, or when the user selects them. |
 | TCP mode | Non-blocking `connect()` probes as in `mtr --tcp` (TTL per socket, `IP_RECVERR`); port 80 by default, configurable. |
 | Upstream feature issues | #3 (UDP and TCP probing), #4 (host name and IP display, on by default in the GUI), #10 (copy of the selected hop). |
-| IPv6 | Supported (upstream is IPv4 only). |
+| IPv6 | Supported (upstream is IPv4 only). `Auto` follows the resolver's address order: IPv6 first on a host with IPv6 connectivity. |
 | Threading | None. One GUI thread, non-blocking sockets and the Qt event loop. |
 | Probe scheduling | Rounds, as in mtr: one probe per TTL per round, one round every `interval` seconds. Upstream uses one blocking thread per TTL. |
 | Loss % | The upstream integer formula `100 - 100*recv/sent`, over resolved probes only (replied and timed out). A probe in flight does not count as lost. |
@@ -92,8 +92,10 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   the final `hops()` themselves.
 - DNS (`DnsResolver`): asynchronous `QHostInfo` lookups, a cache of at most 4096 names, at
   most 8 lookups at a time. It drops PTR names that are not plausible host names. Forward
-  resolution: a literal IP skips the lookup; `IpVersion::Auto` takes the first IPv4 address,
-  else IPv6; `V4` and `V6` filter strictly (no match: `errorOccurred`).
+  resolution: a literal IP skips the lookup; `IpVersion::Auto` takes the first address that
+  the lookup returns (`QHostInfo` keeps the `getaddrinfo` order, which glibc sorts by
+  RFC 6724, so a host with IPv6 connectivity gets IPv6 first, as with mtr); `V4` and `V6`
+  filter strictly (no match: `errorOccurred`).
 
 ### 3.4 TCP backend (`TcpProber`)
 

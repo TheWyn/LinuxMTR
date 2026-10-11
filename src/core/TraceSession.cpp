@@ -258,20 +258,27 @@ void TraceSession::Private::onForwardLookup(const QHostInfo &info)
         return;
     }
 
+    QHostAddress first;   // the resolver's preferred address (glibc sorts by RFC 6724)
     QHostAddress v4;
     QHostAddress v6;
     for (const QHostAddress &raw : info.addresses()) {
         const QHostAddress a = normalizeAddress(raw);
-        if (a.protocol() == QHostAddress::IPv4Protocol && v4.isNull())
+        const bool isV4 = a.protocol() == QHostAddress::IPv4Protocol;
+        const bool isV6 = a.protocol() == QHostAddress::IPv6Protocol;
+        if (!isV4 && !isV6)
+            continue;
+        if (first.isNull())
+            first = a;
+        if (isV4 && v4.isNull())
             v4 = a;
-        else if (a.protocol() == QHostAddress::IPv6Protocol && v6.isNull())
+        else if (isV6 && v6.isNull())
             v6 = a;
     }
 
     QHostAddress chosen;
     switch (options.ipVersion) {
     case TraceOptions::IpVersion::Auto:
-        chosen = !v4.isNull() ? v4 : v6;
+        chosen = first;
         break;
     case TraceOptions::IpVersion::V4:
         chosen = v4;

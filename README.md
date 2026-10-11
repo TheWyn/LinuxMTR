@@ -207,7 +207,7 @@ the reports.
 | `-c`, `--cycles N` | Rounds in report mode (default 10) |
 | `-n`, `--no-dns` | No reverse DNS |
 | `-b`, `--show-ips` | Host name and IP address for each hop, as `mtr -b` |
-| `-4`, `-6` | IPv4 only, IPv6 only |
+| `-4`, `-6` | IPv4 only, IPv6 only (default: the address that the resolver lists first) |
 | `--udp`, `--tcp` | UDP or TCP probes instead of ICMP |
 | `-P`, `--port N` | TCP destination port (default 80) |
 | `-s`, `-i`, `--timeout`, `-m` | Ping size, interval, reply timeout and max hops, as in **Options** |
@@ -261,7 +261,7 @@ order and report layout. Its internals are new and designed for Linux.
 | Protocols | ICMP, UDP and TCP (`connect()` probes, port 80 by default) | ICMP only |
 | Host display | Name, IP address, or both (`name (IP)`, on by default) | Name or IP address |
 | Copy one hop | Ctrl+C in the table, right-click menu | None |
-| IPv6 | Supported | IPv4 only |
+| IPv6 | Supported. **IP version** `Auto` takes the address that the resolver lists first: a dual-stack name traces over IPv6 when this computer has IPv6 connectivity, as with mtr | IPv4 only |
 | Threading | One GUI thread, non-blocking sockets in the Qt event loop | One blocking thread per TTL |
 | Probe scheduling | Rounds, as in mtr: one probe per TTL per round, one round every `interval` seconds | Each TTL thread pings in a loop |
 | Loss % | The WinMTR integer formula `100 - 100*recv/sent`, but only over probes that got a reply or timed out | Same formula; probes still in flight count as lost |
