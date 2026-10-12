@@ -23,7 +23,7 @@ contains no Windows code. The literal UI and report strings are copies on purpos
 | Loss % | The upstream integer formula `100 - 100*recv/sent`, over resolved probes only (replied and timed out). A probe in flight does not count as lost. |
 | Reply timeout | 3.0 s by default, configurable (upstream: fixed 5 s). |
 | Defaults | Interval 1.0 s, ping size 64, LRU 128, DNS on, max hops 30 (all upstream). |
-| Reports | The upstream layout byte for byte, with `WinMTR statistics` changed to `LinMTR statistics` (same length, so the alignment stays). `\n` line endings (upstream `\r\n`). |
+| Reports | The upstream layout byte for byte, with `WinMTR statistics` changed to `LinMTR statistics` (same length, so the alignment stays). `\n` line endings (upstream `\r\n`). Report mode adds a JSON report with a LinMTR schema (§5). |
 | Settings | QSettings, organization and application `LinMTR` (`~/.config/LinMTR/LinMTR.conf`). |
 | Graphs | `HopGraphWidget` draws `HopStats::history`: a live graph of one hop in Host properties, and an optional route graph of all hops under the table. Upstream has no graph. |
 
@@ -35,6 +35,12 @@ while active calls `stop()` first). `stop()` is a synchronous teardown to `Idle`
 snapshot of the probed hops in TTL order, trimmed by the upstream `GetMax()` rule (§3.3).
 Signals: `stateChanged`, `hopsChanged` (coalesced, §3.3), `roundCompleted(int)`,
 `errorOccurred(QString)` (fatal; back to `Idle`) and `infoMessage(QString)` (non-fatal).
+Read access: `state()` (`Idle`, `Resolving`, `Tracing`), `target()`, `targetAddress()` (valid
+after resolution), `options()` (the sanitized options; the protocol after a UDP fallback),
+`roundsCompleted()` and `lastError()`. `HopStats` adds `lossPercent()`, `averageMs()`,
+`displayHost(resolveNames, showIps)` and `addSample()`. `TraceOptions` has `intervalSec`,
+`pingSizeBytes`, `timeoutSec`, `maxHops`, `resolveNames`, `protocol`, `ipVersion`, `tcpPort`
+and `maxRounds` (0 = unlimited).
 `HopStats::history` holds the newest `kHistoryRounds` (3600) probe results of the hop in
 ascending round order, for the graphs (§4). The reports do not use it. Each `HopSample` has
 the round number, the RTT in ms (a negative RTT means no reply) and the send time of the
@@ -81,9 +87,10 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   deadline); TTL k goes at `roundStart + (k - 1) * stagger`, with
   `stagger = min(20 ms, intervalSec * 1000 / (2 * maxTtl))`, so that no burst trips the ICMP
   rate limits of routers. After a stall, the next round starts one interval later.
-- Pending table: `seq (16-bit rolling counter) -> { ttl, round, slot, sentAt }`, with
-  RTT = now - sentAt at drain time, as mtr does. It holds at most 60000 entries, so that the
-  seq space does not fill. At the cap, the session skips probes and emits one capacity
+- Pending table: `seq (16-bit rolling counter) -> { ttl, round, slot, sentAtNs, sentAtMs }`,
+  with RTT = now - sentAtNs at drain time, as mtr does; `sentAtMs` is the wall-clock send
+  time for the `HopSample`. It holds at most 60000 entries, so that the seq space does not
+  fill. At the cap, the session skips probes and emits one capacity
   `infoMessage` per trace, as for the TCP cap. An entry older than
   `timeoutSec` leaves the table and adds `timedOut++` to its hop.
 - Every resolved probe adds one `HopSample` to its hop: the round, the RTT or a negative
@@ -261,3 +268,7 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
     round-trip times. Upstream shows a static modal snapshot.
 13. The route graph under the table and the `Show route graph` option are new; upstream has
     no graph.
+14. Ping size: 0 to 8192 bytes (`OptionsDialog.h`; the CLI check and the engine clamp use the
+    same range). Upstream checks no range. LinMTR sets no `IP_MTU_DISCOVER` option, so the
+    kernel default applies and a probe larger than the path MTU can be fragmented. Upstream
+    sets `IPFLAG_DONT_FRAGMENT` on every probe.

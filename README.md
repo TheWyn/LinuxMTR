@@ -120,7 +120,8 @@ Requirements:
 
 - Linux (LinMTR uses Linux-specific socket extensions)
 - CMake 3.21 or later
-- Qt 6.4 or later (Widgets and Network modules)
+- Qt 6.4 or later (Widgets and Network modules, and the Test module unless you configure
+  with `-DBUILD_TESTING=OFF`)
 - A C++20 compiler (GCC or Clang)
 
 On Arch Linux: `sudo pacman -S --needed base-devel cmake qt6-base`
@@ -215,8 +216,9 @@ that you select in the table has a wider line.
 
 ### Command line
 
-`linmtr [options] [HOST]`. `linmtr --help` lists the options with their ranges, and
-`man linmtr` describes each one.
+`linmtr [options] [HOST]`. `linmtr --help` lists the options with their defaults, and
+`man linmtr` describes each one with its range. A value out of range gives an error message
+that shows the permitted range.
 
 | Option | Effect |
 |---|---|
@@ -236,7 +238,8 @@ reply or has timed out. A hop that LinMTR probes in every round shows `Sent` equ
 `--cycles`, and no probe is still in flight when the report prints. Report mode
 ignores the saved GUI settings, so host names show without IP addresses unless you
 give `-b`. In GUI mode, `-n`, `-b`, `-4`, `-6`, `--udp`, `--tcp`, `-P`, `-s`, `-i`,
-`--timeout` and `-m` replace the saved **Options** values for that session only.
+`--timeout` and `-m` replace the saved **Options** values for that session. LinMTR saves
+them only when you then close **Options** with **OK**.
 
 `--html` and `--json` each select report mode, also without `--report`. With `--html`,
 LinMTR writes the HTML report in the format of **Export HTML**. With `--json`, it writes a
@@ -339,10 +342,10 @@ order and report layout. Its internals are new and designed for Linux.
 | Path | Contents |
 |---|---|
 | `src/core/` | Probing engine: `TraceSession`, ICMP, UDP and TCP probers, asynchronous reverse DNS |
-| `src/gui/` | Qt Widgets main window, table model, dialogs, report builder |
+| `src/gui/` | Qt Widgets main window, table model, dialogs, graph widget, report builder |
 | `src/cli/` | Headless `--report` runner |
 | `tests/` | QtTest unit tests and a loopback trace test |
-| `packaging/` | Arch PKGBUILD, desktop entry, icon, man page |
+| `packaging/` | Arch PKGBUILDs in `arch/linmtr/` and `arch/linmtr-git/`, desktop entry, icon, man page |
 | `DESIGN.md` | Architecture reference |
 
 ## Credits

@@ -197,23 +197,23 @@ or in GUI mode when the saved
 is TCP.
 .TP
 .BI "\-s, \-\-size " bytes
-Payload size of each probe, in bytes.
+Payload size of each probe, in bytes, from 0 to 8192.
 The default is 64.
 UDP probes always carry a minimum of 8 bytes.
 TCP probes carry no payload, so this option has no effect on them.
 .TP
 .BI "\-i, \-\-interval " seconds
-Time between the start of two probe rounds, in seconds.
+Time between the start of two probe rounds, in seconds, from 0.1 to 60.
 You can give fractions.
 The default is 1.0.
 .TP
 .BI \-\-timeout " seconds"
-Time to wait for the reply to a probe, in seconds.
+Time to wait for the reply to a probe, in seconds, from 0.5 to 10.
 A probe without a reply in this time counts as lost.
 The default is 3.0.
 .TP
 .BI "\-m, \-\-max\-hops " N
-Maximum TTL (number of hops) to probe.
+Maximum TTL (number of hops) to probe, from 1 to 64.
 The default is 30.
 .TP
 .B "\-v, \-\-version"
@@ -297,6 +297,8 @@ or
 in your home directory, where
 .I HOST
 is the traced host.
+A character of the host that is not a letter, a digit, a dot, a hyphen or an
+underscore becomes an underscore.
 .PP
 The
 .B Host
@@ -368,6 +370,9 @@ dialog sets the values for traces started from the window:
 (off by default).
 .B Show route graph
 shows a graph of the round\-trip times of all hops under the table.
+A legend gives the hop number of each colour, and the hop that you select in
+the table has a wider line.
+Drag the bar between the table and the graph to change their heights.
 This graph also shows the hop, its host, the send time and the round\-trip
 time of the probe under the pointer, or
 .B Lost
