@@ -13,14 +13,15 @@
 namespace {
 
 // The geometry that HopGraphWidget.cpp documents, for a 400 x 200 widget
-// without a legend. The window has one round for each 3 px of plot width.
+// without a legend. The bottom margin of 28 px holds the lost-probe ticks and
+// the time labels. The window has one round for each 3 px of plot width.
 constexpr int kWidth = 400;
 constexpr int kHeight = 200;
 constexpr int kPlotLeft = 44;
 constexpr int kPlotRight = kWidth - 8;
-constexpr int kBaseline = kHeight - 18;
+constexpr int kBaseline = kHeight - 28;
 constexpr int kSpan = (kPlotRight - kPlotLeft) / 3;   // 116 rounds
-constexpr qint64 kEpochMs = 1760198400000;            // send time of round 0
+constexpr qint64 kEpochMs = 1760198400000;            // send time of round 0; a multiple of 30 s
 
 const QColor kRed(255, 0, 0);
 const QColor kBlue(0, 0, 255);
@@ -80,6 +81,10 @@ private slots:
     void highlightDrawnLast();
     void oldRoundsScrollOff();
     void toolTipAtSample();
+    void labelStepMs_data();
+    void labelStepMs();
+    void timeLabels();
+    void labelsDoNotOverlap();
 };
 
 void TestHopGraphWidget::niceCeiling_data()
@@ -222,6 +227,84 @@ void TestHopGraphWidget::toolTipAtSample()
     QVERIFY(graph.toolTipAt(QPoint(tickX, kBaseline + 9)).endsWith(QStringLiteral("Lost")));
 
     QVERIFY(graph.toolTipAt(QPoint(kPlotLeft + 2, 10)).isEmpty());
+}
+
+void TestHopGraphWidget::labelStepMs_data()
+{
+    QTest::addColumn<double>("msPerRound");
+    QTest::addColumn<int>("minLabelPx");
+    QTest::addColumn<qint64>("step");
+    QTest::newRow("1 s") << 1000.0 << 80 << qint64(30000);
+    QTest::newRow("100 ms") << 100.0 << 80 << qint64(5000);
+    QTest::newRow("500 ms") << 500.0 << 80 << qint64(15000);
+    QTest::newRow("5 s") << 5000.0 << 80 << qint64(300000);
+    QTest::newRow("1 min") << 60000.0 << 80 << qint64(1800000);
+    QTest::newRow("1 h") << 3600000.0 << 80 << qint64(86400000);
+    QTest::newRow("0") << 0.0 << 80 << qint64(0);
+}
+
+void TestHopGraphWidget::labelStepMs()
+{
+    QFETCH(double, msPerRound);
+    QFETCH(int, minLabelPx);
+    QFETCH(qint64, step);
+    QCOMPARE(HopGraphWidget::labelStepMs(msPerRound, minLabelPx), step);
+}
+
+// Rounds 1..kSpan, one each second: the window starts at round 1, and the
+// 30 s labels are at rounds 30, 60 and 90. Without send times, no labels.
+void TestHopGraphWidget::timeLabels()
+{
+    const auto labelPixels = [](bool withTimes, int fromX, int toX) {
+        QList<HopSample> samples;
+        for (int round = 1; round <= kSpan; ++round)
+            samples.append(HopSample{round, 20.0f, withTimes ? kEpochMs + round * 1000 : 0});
+        HopGraphWidget graph;
+        graph.setSeries({{QStringLiteral("1"), kRed, samples}});
+        const QImage image = render(graph);
+        const QColor text = graph.palette().text().color();
+        int count = 0;
+        for (int y = kBaseline + 8; y < kHeight; ++y) {
+            for (int x = qMax(0, fromX); x <= qMin(kWidth - 1, toX); ++x)
+                count += isClose(image.pixel(x, y), text) ? 1 : 0;
+        }
+        return count;
+    };
+
+    const int x60 = kPlotLeft + (60 - 1) * (kPlotRight - kPlotLeft) / (kSpan - 1);
+    QVERIFY(labelPixels(true, x60 - 30, x60 + 30) >= 5);
+    QCOMPARE(labelPixels(false, 0, kWidth - 1), 0);
+}
+
+// A wall-clock jump (suspend and resume) between rounds 100 and 101: round 106
+// is 2 h after the start, on a step boundary. The rounds before and after the
+// jump are in different buckets, so rounds 101 and 106 both get a label, 15 px
+// apart. Only one of them may be drawn.
+void TestHopGraphWidget::labelsDoNotOverlap()
+{
+    QList<HopSample> samples;
+    for (int round = 1; round <= kSpan; ++round) {
+        const qint64 sentAtMs = round <= 100 ? kEpochMs + round * 1000
+                                             : kEpochMs + 7200000 + (round - 106) * 1000;
+        samples.append(HopSample{round, 20.0f, sentAtMs});
+    }
+    HopGraphWidget graph;
+    graph.setSeries({{QStringLiteral("1"), kRed, samples}});
+    const QImage image = render(graph);
+    const QColor text = graph.palette().text().color();
+    int minX = kWidth;
+    int maxX = -1;
+    for (int y = kBaseline + 8; y < kHeight; ++y) {
+        for (int x = 0; x < kWidth; ++x) {
+            if (isClose(image.pixel(x, y), text)) {
+                minX = qMin(minX, x);
+                maxX = qMax(maxX, x);
+            }
+        }
+    }
+    QVERIFY(maxX >= 0);
+    QVERIFY2(maxX - minX < graph.fontMetrics().horizontalAdvance(QStringLiteral("00:00")),
+             qPrintable(QStringLiteral("labels from x %1 to %2").arg(minX).arg(maxX)));
 }
 
 int main(int argc, char *argv[])

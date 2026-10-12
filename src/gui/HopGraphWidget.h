@@ -13,7 +13,10 @@
 // Line graph of round-trip times over probe rounds, one line per series. A lost
 // probe is a short tick below the zero line. The X axis is a window of the
 // newest rounds, one round for each 3 px of plot width (at least 2, at most
-// HopStats::kHistoryRounds); older rounds leave at the left edge.
+// HopStats::kHistoryRounds); older rounds leave at the left edge. Time labels
+// under the axis mark local-time multiples of a step. The step comes from the
+// send times, so that the labels do not overlap. Each label has a vertical
+// gridline.
 class HopGraphWidget : public QWidget
 {
     Q_OBJECT
@@ -37,6 +40,12 @@ public:
     // The smallest value of 10, 20, 50, 100, 200, 500, 1000, ... that is not
     // less than maxMs.
     static double niceCeiling(double maxMs);
+
+    // The smallest step of 1, 2, 5, 10, 15, 30 s; 1, 2, 5, 10, 15, 30 min;
+    // 1, 2, 3, 6, 12, 24 h that puts labels at least minLabelPx apart, in ms.
+    // Gives 24 h when no step is large enough, and 0 (no labels) when
+    // msPerRound is not more than 0.
+    static qint64 labelStepMs(double msPerRound, int minLabelPx);
 
     // The colour for index from a palette of 10 colours; index 10 gets the
     // colour of index 0 again.

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <vector>
 
 namespace {
 
@@ -19,7 +20,7 @@ constexpr int kMarginLeft = 44;     // Y labels
 constexpr int kMarginRight = 8;
 constexpr int kMarginTop = 8;
 constexpr int kLegendHeight = 16;
-constexpr int kMarginBottom = 18;   // lost-probe ticks
+constexpr int kMarginBottom = 28;   // lost-probe ticks and the time labels
 constexpr int kPxPerRound = 3;     // X scale: older rounds scroll off instead of compressing
 constexpr int kHitPx = 6;          // tooltip: the largest pointer distance to a sample
 
@@ -60,6 +61,23 @@ double HopGraphWidget::niceCeiling(double maxMs)
                 return decade * step;
         }
     }
+}
+
+qint64 HopGraphWidget::labelStepMs(double msPerRound, int minLabelPx)
+{
+    if (!(msPerRound > 0.0))   // also NaN
+        return 0;
+    constexpr qint64 s = 1000;
+    constexpr qint64 m = 60 * s;
+    constexpr qint64 h = 60 * m;
+    const double minStep = minLabelPx * msPerRound / kPxPerRound;
+    for (const qint64 step : {1 * s, 2 * s, 5 * s, 10 * s, 15 * s, 30 * s,
+                              1 * m, 2 * m, 5 * m, 10 * m, 15 * m, 30 * m,
+                              1 * h, 2 * h, 3 * h, 6 * h, 12 * h}) {
+        if (static_cast<double>(step) >= minStep)
+            return step;
+    }
+    return 24 * h;
 }
 
 QColor HopGraphWidget::seriesColor(int index)
@@ -168,6 +186,61 @@ void HopGraphWidget::paintEvent(QPaintEvent *)
         p.setPen(textColor);
         p.drawText(QRect(0, y - textH / 2, l.left - 4, textH), Qt::AlignRight | Qt::AlignVCenter,
                    QString::number(l.ceiling * i / 4));
+    }
+
+    // Time labels: the send time of each visible round, the earliest of all series.
+    std::vector<qint64> roundTime(l.span, 0);
+    for (const Series &s : m_series) {
+        for (const HopSample &v : s.samples) {
+            if (v.round < l.startRound || v.sentAtMs <= 0)
+                continue;
+            qint64 &t = roundTime[v.round - l.startRound];
+            if (t == 0 || v.sentAtMs < t)
+                t = v.sentAtMs;
+        }
+    }
+    int firstIdx = -1;
+    int lastIdx = -1;
+    for (int idx = 0; idx < l.span; ++idx) {
+        if (roundTime[idx] > 0) {
+            if (firstIdx < 0)
+                firstIdx = idx;
+            lastIdx = idx;
+        }
+    }
+    if (lastIdx > firstIdx) {
+        const double msPerRound =
+            double(roundTime[lastIdx] - roundTime[firstIdx]) / (lastIdx - firstIdx);
+        const qint64 step = labelStepMs(
+            msPerRound, fontMetrics().horizontalAdvance(QStringLiteral("00:00:00")) * 3 / 2);
+        if (step > 0) {
+            // shortcut: one offset per paint; labels after a DST change in the window shift by an hour until it scrolls out, upgrade if anyone notices
+            const qint64 offsetMs =
+                QDateTime::fromMSecsSinceEpoch(roundTime[firstIdx]).offsetFromUtc() * 1000LL;
+            const auto bucket = [&](qint64 t) { return (t + offsetMs) / step; };
+            qint64 prev = bucket(roundTime[firstIdx]);
+            int lastRight = std::numeric_limits<int>::min();
+            for (int idx = firstIdx + 1; idx <= lastIdx; ++idx) {
+                const qint64 t = roundTime[idx];
+                if (t <= 0 || bucket(t) == prev)
+                    continue;
+                prev = bucket(t);
+                const int x = qRound(l.x(l.startRound + idx));
+                const QString text = QDateTime::fromMSecsSinceEpoch(prev * step - offsetMs)
+                    .toString(step < 60000 ? QStringLiteral("hh:mm:ss") : QStringLiteral("hh:mm"));
+                const int labelW = fontMetrics().horizontalAdvance(text);
+                const int left = qBound(0, x - labelW / 2, width() - labelW);
+                // A wall-clock jump in the window can put two boundaries within one label width.
+                if (left < lastRight + 4)
+                    continue;
+                lastRight = left + labelW;
+                p.setPen(QPen(midColor, 1));
+                p.drawLine(x, l.top, x, l.bottom);
+                p.setPen(textColor);
+                p.drawText(QRect(left, l.bottom + 8, labelW, height() - (l.bottom + 8)),
+                           Qt::AlignHCenter | Qt::AlignTop, text);
+            }
+        }
     }
 
     if (m_legendVisible) {

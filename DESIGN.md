@@ -155,6 +155,13 @@ Labels, mnemonics and button texts are verbatim upstream (`WinMTR.rc`).
 - Both graphs: the X axis is a window of the newest rounds, one round for each 3 px of plot
   width (at least 2, at most `kHistoryRounds`). The newest round is at the right edge, and
   older rounds leave at the left edge, so the lines do not compress as the history grows.
+  Time labels under the X axis use the send times of the visible rounds. The step between
+  them is the smallest of 1 s .. 24 h (`labelStepMs()`) that keeps the labels at least 1.5
+  label widths apart. The labels are at local-time multiples of the step, and each label
+  has a vertical gridline. A wall-clock jump in the window can put two labels less than
+  4 px apart. Then the graph does not draw the second label or its gridline. The text is
+  `hh:mm:ss`, or `hh:mm` for a step of 1 min or more.
+  The bottom margin is 28 px, for the lost-probe ticks and the time labels.
   A tooltip shows the visible sample nearest to the pointer, within 6 px: the hop number,
   the host text of the row (`displayHost()`), the send time of the probe
   (`yyyy-MM-dd hh:mm:ss`, local time) and the RTT or `Lost`. The point of a lost probe is

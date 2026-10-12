@@ -206,10 +206,12 @@ the table, select **Show route graph** in **Options**. Drag the bar between the 
 the graph to change their heights. In both graphs, a line shows the round-trip time of a
 hop in each round. A line has a gap where a round has no reply, and a short tick below
 the zero line marks each lost probe. A graph shows one round for each 3 pixels of its
-width. When the graph is full, the oldest rounds move off its left edge. Hold the pointer
-on a line or a tick to see the hop, its host, the time when the probe was sent and the
-round-trip time, or **Lost** for a lost probe. In the route graph, the legend gives the
-hop number of each colour, and the hop that you select in the table has a wider line.
+width. When the graph is full, the oldest rounds move off its left edge. Time labels under
+the graph show when the rounds were sent. The step between the labels depends on the
+interval, from 1 second to 24 hours. Hold the pointer on a line or a tick to see the hop,
+its host, the time when the probe was sent and the round-trip time, or **Lost** for a lost
+probe. In the route graph, the legend gives the hop number of each colour, and the hop
+that you select in the table has a wider line.
 
 ### Command line
 
