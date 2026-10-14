@@ -4,6 +4,8 @@
 #include <QApplication>
 #include <QDateTime>
 #include <QImage>
+#include <QMouseEvent>
+#include <QToolTip>
 #include <QtTest>
 
 #include <cmath>
@@ -67,6 +69,20 @@ QList<HopSample> curve(double base, double amplitude, int lostRound = 0)
     return samples;
 }
 
+// Counts the paints that update() causes; render() also counts.
+class PaintCounter : public HopGraphWidget
+{
+public:
+    int paints = 0;
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        ++paints;
+        HopGraphWidget::paintEvent(event);
+    }
+};
+
 } // namespace
 
 class TestHopGraphWidget : public QObject
@@ -81,6 +97,7 @@ private slots:
     void highlightDrawnLast();
     void oldRoundsScrollOff();
     void toolTipAtSample();
+    void hoverMarker();
     void labelStepMs_data();
     void labelStepMs();
     void timeLabels();
@@ -227,6 +244,71 @@ void TestHopGraphWidget::toolTipAtSample()
     QVERIFY(graph.toolTipAt(QPoint(tickX, kBaseline + 9)).endsWith(QStringLiteral("Lost")));
 
     QVERIFY(graph.toolTipAt(QPoint(kPlotLeft + 2, 10)).isEmpty());
+}
+
+// A flat line at 12 ms (ceiling 20): round 30 is at x 392, y 73.6. The probe
+// pixel is 2 px below the line, inside the marker circle (radius 4) and off
+// the 1 px line, so only the marker can make it red. The tooltip shows only
+// while a window of the application is active, as the tooltips of Qt do.
+void TestHopGraphWidget::hoverMarker()
+{
+    const auto flat = [](float ms) {
+        QList<HopSample> samples;
+        for (int round = 1; round <= 30; ++round)
+            samples.append(HopSample{round, ms});
+        return samples;
+    };
+    PaintCounter graph;
+    graph.setSeries({{QStringLiteral("1"), kRed, flat(12.0f)}});
+    const QColor base = graph.palette().base().color();
+    const double y = kBaseline - 12.0 / 20.0 * (kBaseline - 8);
+    const QPoint probe(kPlotRight, static_cast<int>(y + 2.0));
+    QVERIFY(isClose(render(graph).pixel(probe), base));
+
+    // Mouse tracking: without it, QApplication drops a move with no button down.
+    const QPoint pointer(kPlotRight, qRound(y));
+    QMouseEvent move(QEvent::MouseMove, QPointF(pointer), graph.mapToGlobal(QPointF(pointer)),
+                     Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&graph, &move);
+    QVERIFY(isClose(render(graph).pixel(probe), kRed));
+    QVERIFY(QApplication::activeWindow() == nullptr);
+    QVERIFY(!QToolTip::isVisible());
+
+    graph.show();
+    graph.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&graph));
+    QApplication::sendEvent(&graph, &move);
+    QCOMPARE(QToolTip::text(), graph.toolTipAt(pointer));
+    QVERIFY(!QToolTip::text().isEmpty());
+    // The tooltip follows new samples under the pointer that does not move.
+    graph.setSeries({{QStringLiteral("1"), kRed, flat(12.0f), QStringLiteral("host")}});
+    QCOMPARE(QToolTip::text(), graph.toolTipAt(pointer));
+    QVERIFY(QToolTip::text().startsWith(QStringLiteral("Hop 1: host\n")));
+
+    // New samples far from the pointer that does not move: no marker.
+    graph.setSeries({{QStringLiteral("1"), kRed, flat(2.0f)}});
+    QVERIFY(isClose(render(graph).pixel(probe), base));
+    graph.setSeries({{QStringLiteral("1"), kRed, flat(12.0f)}});
+    QVERIFY(isClose(render(graph).pixel(probe), kRed));
+
+    QEvent leave(QEvent::Leave);
+    QApplication::sendEvent(&graph, &leave);
+    QVERIFY(isClose(render(graph).pixel(probe), base));
+
+    // A move repaints only when the marker moves, because a paint delays the
+    // read of replies. After the leave, a move onto the same sample moves it.
+    QTest::qWait(50);
+    int paints = graph.paints;
+    QApplication::sendEvent(&graph, &move);
+    QTRY_VERIFY(graph.paints > paints);
+    QTest::qWait(50);
+    paints = graph.paints;
+    const QPoint nearby = pointer + QPoint(0, 1);
+    QMouseEvent moveNearby(QEvent::MouseMove, QPointF(nearby), graph.mapToGlobal(QPointF(nearby)),
+                           Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&graph, &moveNearby);
+    QTest::qWait(50);
+    QCOMPARE(graph.paints, paints);
 }
 
 void TestHopGraphWidget::labelStepMs_data()

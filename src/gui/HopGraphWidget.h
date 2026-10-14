@@ -5,8 +5,11 @@
 
 #include <QColor>
 #include <QList>
+#include <QPointF>
 #include <QString>
 #include <QWidget>
+
+#include <optional>
 
 #include "core/HopStats.h"
 
@@ -16,7 +19,9 @@
 // HopStats::kHistoryRounds); older rounds leave at the left edge. Time labels
 // under the axis mark local-time multiples of a step. The step comes from the
 // send times, so that the labels do not overlap. Each label has a vertical
-// gridline.
+// gridline. While the pointer is in the widget, the tooltip of toolTipAt()
+// shows at once and a circle marks its sample, also when the lines move. There
+// is no tooltip while no window of the application is active.
 class HopGraphWidget : public QWidget
 {
     Q_OBJECT
@@ -60,7 +65,8 @@ public:
     QString toolTipAt(const QPoint &pos) const;
 
 protected:
-    bool event(QEvent *e) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void leaveEvent(QEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
 
 private:
@@ -82,9 +88,23 @@ private:
         double y(float ms) const { return bottom - ms / ceiling * plotH; }
     };
 
+    // The visible sample nearest to a pointer position, within 6 px.
+    struct Hit
+    {
+        int series = -1;    // -1: no sample is near
+        QPointF point;      // the sample on the plot; for a lost probe, the middle of its tick
+        QString text;       // the tooltip text
+    };
+
     Layout layout() const;
+    Hit hitAt(const QPoint &pos) const;
+    // Sets m_hit for m_pointer and shows its tooltip. Hides the tooltip when no
+    // sample is near or no window of the application is active.
+    void updateToolTip();
 
     QList<Series> m_series;
     int m_highlight = -1;
     bool m_legendVisible = false;
+    std::optional<QPoint> m_pointer;   // set while the pointer is in the widget
+    Hit m_hit;                         // the hit of the last updateToolTip()
 };

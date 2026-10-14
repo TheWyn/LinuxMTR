@@ -3,8 +3,9 @@
 
 #include "gui/HopGraphWidget.h"
 
+#include <QApplication>
 #include <QDateTime>
-#include <QHelpEvent>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPolygonF>
 #include <QToolTip>
@@ -36,12 +37,16 @@ HopGraphWidget::HopGraphWidget(QWidget *parent)
     : QWidget(parent)
 {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // The help event comes only after the pointer stops for some time; the lines move each round.
+    setMouseTracking(true);
 }
 
 void HopGraphWidget::setSeries(const QList<Series> &series, int highlight)
 {
     m_series = series;
     m_highlight = highlight;
+    if (m_pointer)   // the samples moved under a pointer that does not move
+        updateToolTip();
     update();
 }
 
@@ -122,50 +127,73 @@ HopGraphWidget::Layout HopGraphWidget::layout() const
     return l;
 }
 
-QString HopGraphWidget::toolTipAt(const QPoint &pos) const
+HopGraphWidget::Hit HopGraphWidget::hitAt(const QPoint &pos) const
 {
+    Hit hit;
     const Layout l = layout();
     if (l.empty)
-        return {};
-    const Series *hitSeries = nullptr;
-    const HopSample *hit = nullptr;
+        return hit;
+    const HopSample *sample = nullptr;
     double best = std::numeric_limits<double>::max();
-    for (const Series &s : m_series) {
-        for (const HopSample &v : s.samples) {
+    for (int i = 0; i < m_series.size(); ++i) {
+        for (const HopSample &v : m_series.at(i).samples) {
             if (v.round < l.startRound)
                 continue;
-            const double dx = l.x(v.round) - pos.x();
-            const double dy = (v.ms < 0 ? l.bottom + 4 : l.y(v.ms)) - pos.y();
+            const QPointF point(l.x(v.round), v.ms < 0 ? l.bottom + 4 : l.y(v.ms));
+            const double dx = point.x() - pos.x();
+            const double dy = point.y() - pos.y();
             const double d = dx * dx + dy * dy;
             if (d <= kHitPx * kHitPx && d < best) {   // strict: the first found wins a tie
                 best = d;
-                hitSeries = &s;
-                hit = &v;
+                hit.series = i;
+                hit.point = point;
+                sample = &v;
             }
         }
     }
-    if (hit == nullptr)
-        return {};
-    const QString sentAt = QDateTime::fromMSecsSinceEpoch(hit->sentAtMs)
+    if (sample == nullptr)
+        return hit;
+    const Series &s = m_series.at(hit.series);
+    const QString sentAt = QDateTime::fromMSecsSinceEpoch(sample->sentAtMs)
                                .toString(QStringLiteral("yyyy-MM-dd hh:mm:ss"));
-    return tr("Hop %1: %2").arg(hitSeries->label, hitSeries->host) + QLatin1Char('\n') + sentAt
+    hit.text = tr("Hop %1: %2").arg(s.label, s.host) + QLatin1Char('\n') + sentAt
         + QStringLiteral("  ")
-        + (hit->ms < 0 ? tr("Lost") : tr("%1 ms").arg(static_cast<double>(hit->ms), 0, 'f', 1));
+        + (sample->ms < 0 ? tr("Lost") : tr("%1 ms").arg(static_cast<double>(sample->ms), 0, 'f', 1));
+    return hit;
 }
 
-bool HopGraphWidget::event(QEvent *e)
+QString HopGraphWidget::toolTipAt(const QPoint &pos) const
 {
-    if (e->type() != QEvent::ToolTip)
-        return QWidget::event(e);
-    const auto *help = static_cast<QHelpEvent *>(e);
-    const QString text = toolTipAt(help->pos());
-    if (text.isEmpty()) {
+    return hitAt(pos).text;
+}
+
+void HopGraphWidget::updateToolTip()
+{
+    m_hit = hitAt(*m_pointer);
+    // Like Qt: no tooltip while another application is active. No tip rect: with
+    // a rect, Qt hides the tip when the pointer leaves it.
+    if (m_hit.text.isEmpty() || QApplication::activeWindow() == nullptr)
         QToolTip::hideText();
-        e->ignore();
-    } else {
-        QToolTip::showText(help->globalPos(), text, this);
-    }
-    return true;
+    else
+        QToolTip::showText(mapToGlobal(*m_pointer), m_hit.text, this);
+}
+
+void HopGraphWidget::mouseMoveEvent(QMouseEvent *event)
+{
+    const Hit old = m_hit;
+    m_pointer = event->position().toPoint();
+    updateToolTip();
+    // A repaint delays the read of replies and makes their RTTs larger.
+    if (m_hit.series != old.series || m_hit.point != old.point)
+        update();   // the marker moved
+}
+
+void HopGraphWidget::leaveEvent(QEvent *)
+{
+    m_pointer.reset();
+    m_hit = {};
+    QToolTip::hideText();
+    update();
 }
 
 void HopGraphWidget::paintEvent(QPaintEvent *)
@@ -299,4 +327,14 @@ void HopGraphWidget::paintEvent(QPaintEvent *)
     }
     if (m_highlight >= 0 && m_highlight < m_series.size())
         drawSeries(m_series.at(m_highlight), 2);
+
+    // The marker of the hovered sample, on top of all lines.
+    if (m_pointer) {
+        const Hit hit = hitAt(*m_pointer);
+        if (hit.series >= 0) {
+            p.setPen(QPen(palette().windowText().color(), 1.5));
+            p.setBrush(m_series.at(hit.series).color);
+            p.drawEllipse(hit.point, 4.0, 4.0);
+        }
+    }
 }

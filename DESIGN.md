@@ -172,7 +172,15 @@ Labels, mnemonics and button texts are verbatim upstream (`WinMTR.rc`).
   A tooltip shows the visible sample nearest to the pointer, within 6 px: the hop number,
   the host text of the row (`displayHost()`), the send time of the probe
   (`yyyy-MM-dd hh:mm:ss`, local time) and the RTT or `Lost`. The point of a lost probe is
-  the middle of its tick.
+  the middle of its tick. The lines move each round, thus the graph does not wait for the
+  help event of Qt: it uses mouse tracking and shows the tooltip at once on each pointer
+  move. A filled circle (radius 4 px, the colour of the series, a 1.5 px outline in the
+  window text colour) marks that sample on top of all lines. When the samples change under
+  a pointer that does not move, the graph finds the nearest sample again and updates the
+  tooltip and the circle. When the pointer leaves the graph, the graph hides the tooltip
+  and removes the circle. As with the tooltips of Qt, there is no tooltip while no window
+  of LinMTR is active. A repaint delays the read of replies and thus makes their RTT
+  larger, so a pointer move repaints the graph only when the circle moves.
 
 ## 5. Report formats (`ReportBuilder`, shared by GUI and CLI)
 
