@@ -1,6 +1,6 @@
 pkgbase = linmtr-git
 	pkgdesc = Qt 6 port of WinMTR: graphical traceroute and ping network diagnostic tool (git version)
-	pkgver = 0.1.0.r0.g63a1263
+	pkgver = 0.1.0.r0.gd0f5f40
 	pkgrel = 1
 	url = https://github.com/TheWyn/LinuxMTR
 	arch = x86_64
