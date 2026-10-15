@@ -183,7 +183,8 @@ void HopGraphWidget::mouseMoveEvent(QMouseEvent *event)
     const Hit old = m_hit;
     m_pointer = event->position().toPoint();
     updateToolTip();
-    // A repaint delays the read of replies and makes their RTTs larger.
+    // A repaint costs CPU and delays the read of replies. An answer without a kernel
+    // RTT, for example a TCP reset, then gets a larger RTT (DESIGN.md §3.2).
     if (m_hit.series != old.series || m_hit.point != old.point)
         update();   // the marker moved
 }

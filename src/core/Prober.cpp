@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <ctime>
 
 #include <net/if.h>
 #include <sys/types.h>
@@ -232,6 +233,8 @@ int Prober::open()
                             : ::setsockopt(fd.get(), IPPROTO_IP, IP_RECVERR, &one, sizeof(one));
         if (rc != 0)
             return errno;
+        // Arrival stamps for the RTT. Without them, the RTT ends at the read (DESIGN.md §3.2).
+        ::setsockopt(fd.get(), SOL_SOCKET, SO_TIMESTAMPNS, &one, sizeof(one));
 
         if (const int err = configureSocket(fd.get()); err != 0)
             return err;
@@ -356,9 +359,16 @@ Prober::ReadResult Prober::readOne(int slot, bool errQueue, const EventSink &sin
     quint16 peerPort = 0;
     const bool hasName = addressFromSockaddr(name, nameLen, &peer, &peerPort);
 
+    const qint64 arrivalNs = decodeArrivalStamp(&msg, sizeof(control));
+    const EventSink stampSink = [&sink, arrivalNs](const ProbeEvent &ev) {
+        ProbeEvent stamped = ev;
+        stamped.arrivalNs = arrivalNs;
+        sink(stamped);
+    };
+
     if (!errQueue) {
         if (hasName)
-            handleData(normalizeAddress(peer), peerPort, m_rxBuf.data(), len, sink);
+            handleData(normalizeAddress(peer), peerPort, m_rxBuf.data(), len, stampSink);
         return ReadResult::Consumed;
     }
 
@@ -370,7 +380,7 @@ Prober::ReadResult Prober::readOne(int slot, bool errQueue, const EventSink &sin
         info.destination = normalizeAddress(peer);
         info.destinationPort = peerPort;
     }
-    handleError(info, m_rxBuf.data(), len, sink);
+    handleError(info, m_rxBuf.data(), len, stampSink);
     return ReadResult::Consumed;
 }
 
@@ -429,6 +439,33 @@ bool decodeExtendedError(msghdr *msg, std::size_t controlCapacity, ErrQueueInfo 
         return true;
     }
     return false;
+}
+
+qint64 decodeArrivalStamp(msghdr *msg, std::size_t controlCapacity)
+{
+    const std::size_t controlLen = std::min<std::size_t>(msg->msg_controllen, controlCapacity);
+    msg->msg_controllen = controlLen;
+    const auto *control = static_cast<const unsigned char *>(msg->msg_control);
+    for (cmsghdr *c = CMSG_FIRSTHDR(msg); c != nullptr; c = CMSG_NXTHDR(msg, c)) {
+        if (c->cmsg_level != SOL_SOCKET || c->cmsg_type != SCM_TIMESTAMPNS)
+            continue;
+        const std::size_t payloadOffset = static_cast<std::size_t>(CMSG_DATA(c) - control);
+        if (c->cmsg_len < CMSG_LEN(sizeof(timespec)) || payloadOffset + sizeof(timespec) > controlLen)
+            continue;
+        timespec ts;
+        std::memcpy(&ts, CMSG_DATA(c), sizeof(ts));
+        return static_cast<qint64>(ts.tv_sec) * 1'000'000'000 + ts.tv_nsec;
+    }
+    return 0;
+}
+
+qint64 replyRttNs(const ProbeEvent &ev, qint64 readNs, qint64 wallNs)
+{
+    qint64 kernelNs = static_cast<qint64>(ev.rttUs) * 1000;
+    if (kernelNs == 0 && ev.arrivalNs > 0)
+        kernelNs = readNs - (wallNs - ev.arrivalNs);
+    // Out of range: no kernel value, or a wall-clock step or suspend after the arrival.
+    return kernelNs > 0 && kernelNs <= readNs ? kernelNs : readNs;
 }
 
 void Prober::drain(const EventSink &sink)

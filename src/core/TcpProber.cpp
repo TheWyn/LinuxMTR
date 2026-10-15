@@ -28,7 +28,8 @@ constexpr int kErrQueueBudget = 8;
 
 enum class ErrQueueRead { Empty, Skipped, Entry };
 
-ErrQueueRead readErrQueue(int fd, ErrQueueInfo *info)
+// *arrivalNs gets the kernel arrival stamp of the entry, or 0.
+ErrQueueRead readErrQueue(int fd, ErrQueueInfo *info, qint64 *arrivalNs)
 {
     // The returned data is the quoted TCP header. The prober does not need it:
     // the socket alone identifies the probe.
@@ -42,6 +43,7 @@ ErrQueueRead readErrQueue(int fd, ErrQueueInfo *info)
         msg.msg_control = control;
         msg.msg_controllen = sizeof(control);
         if (::recvmsg(fd, &msg, MSG_ERRQUEUE | MSG_DONTWAIT) >= 0) {
+            *arrivalNs = decodeArrivalStamp(&msg, sizeof(control));
             return decodeExtendedError(&msg, sizeof(control), info) ? ErrQueueRead::Entry
                                                                     : ErrQueueRead::Skipped;
         }
@@ -56,14 +58,19 @@ ErrQueueRead readErrQueue(int fd, ErrQueueInfo *info)
 // then wrong by whole seconds (Karn's rule). Nothing answered the probe that the
 // session sent, so it counts as lost, as an ICMP or UDP probe does. This applies
 // to every reply: handshake, RST, time exceeded and port unreachable.
-bool synRetransmitted(int fd)
+// *rttUs gets tcpi_rtt: the RTT in microseconds that the kernel measured from the
+// SYN to the SYN-ACK, or 0 without a handshake (RST, ICMP answer). A late read does
+// not change it. When TCP_INFO fails, *rttUs does not change.
+bool synRetransmitted(int fd, quint32 *rttUs)
 {
     tcp_info info{};
     socklen_t len = sizeof(info);
     if (::getsockopt(fd, IPPROTO_TCP, TCP_INFO, &info, &len) != 0)
         return false;
+    // tcpi_rtt comes before tcpi_total_retrans, so this check covers both.
     if (len < offsetof(tcp_info, tcpi_total_retrans) + sizeof(info.tcpi_total_retrans))
         return false;
+    *rttUs = info.tcpi_rtt;
     return info.tcpi_total_retrans > 0;
 }
 
@@ -140,9 +147,10 @@ int TcpProber::open()
     }
 
     // send() makes one socket per probe. Make one now, so that a missing
-    // permission stops the trace at once and does not fail every probe.
-    UniqueFd check;
-    if (const int err = newSocket(&check); err != 0)
+    // permission stops the trace at once and does not fail every probe. Keep it
+    // open: the kernel turns the arrival stamps on with a delay, and off when the
+    // last socket that uses them closes. This socket keeps them on for the probes.
+    if (const int err = newSocket(&m_stampKeeper); err != 0)
         return err;
     m_open = true;
     return 0;
@@ -158,6 +166,8 @@ int TcpProber::newSocket(UniqueFd *out) const
                         : ::setsockopt(fd.get(), IPPROTO_IP, IP_RECVERR, &one, sizeof(one));
     if (rc != 0)
         return errno;
+    // Arrival stamps for ICMP answers. Without them, such an answer gets the RTT at the read.
+    ::setsockopt(fd.get(), SOL_SOCKET, SO_TIMESTAMPNS, &one, sizeof(one));
     *out = std::move(fd);
     return 0;
 }
@@ -223,7 +233,8 @@ bool TcpProber::inspect(Probe &probe, short revents, ProbeEvent *ev)
     // and the bare SO_ERROR (EHOSTUNREACH) does not tell which router answered.
     for (int i = 0; i < kErrQueueBudget; ++i) {
         ErrQueueInfo info;
-        const ErrQueueRead read = readErrQueue(fd, &info);
+        qint64 arrivalNs = 0;
+        const ErrQueueRead read = readErrQueue(fd, &info, &arrivalNs);
         if (read == ErrQueueRead::Empty)
             break;
         if (read == ErrQueueRead::Skipped)
@@ -236,10 +247,12 @@ bool TcpProber::inspect(Probe &probe, short revents, ProbeEvent *ev)
         if (verdict.kind == IcmpVerdict::Kind::TimeExceeded) {
             ev->kind = ProbeEvent::Kind::Reply;
             ev->responder = info.offender;
+            ev->arrivalNs = arrivalNs;
             return true;
         }
         if (verdict.kind == IcmpVerdict::Kind::Unreachable) {
             ev->responder = info.offender;
+            ev->arrivalNs = arrivalNs;
             if (verdict.portUnreachable) {
                 // A REJECT firewall at or in front of the destination answered
                 // for it: target reached, as in UDP mode and mtr --tcp. The
@@ -312,7 +325,7 @@ void TcpProber::drain(const EventSink &sink)
         ProbeEvent ev;
         if (!inspect(it->second, fds[i].revents, &ev))
             continue;
-        if (ev.kind == ProbeEvent::Kind::Reply && synRetransmitted(it->second.fd.get())) {
+        if (ev.kind == ProbeEvent::Kind::Reply && synRetransmitted(it->second.fd.get(), &ev.rttUs)) {
             ev = ProbeEvent{};
             ev.kind = ProbeEvent::Kind::Lost;
         }

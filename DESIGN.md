@@ -19,6 +19,7 @@ contains no Windows code. The literal UI and report strings are copies on purpos
 | Upstream feature issues | #3 (UDP and TCP probing), #4 (host name and IP display, on by default in the GUI), #10 (copy of the selected hop). |
 | IPv6 | Supported (upstream is IPv4 only). `Auto` follows the resolver's address order: IPv6 first on a host with IPv6 connectivity. |
 | Threading | None. One GUI thread, non-blocking sockets and the Qt event loop. |
+| RTT | From the kernel, so that a busy GUI thread does not make it larger: the arrival stamp (`SO_TIMESTAMPNS`), or `tcpi_rtt` for a TCP handshake; else the RTT at the read (§3.2, §3.4). Upstream reads `RoundTripTime` from `IcmpSendEcho`. |
 | Probe scheduling | Rounds, as in mtr: one probe per TTL per round, one round every `interval` seconds. Upstream uses one blocking thread per TTL. |
 | Loss % | The upstream integer formula `100 - 100*recv/sent`, over resolved probes only (replied and timed out). A probe in flight does not count as lost. |
 | Reply timeout | 3.0 s by default, configurable (upstream: fixed 5 s). |
@@ -80,6 +81,23 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
 - A failed `sendto()` counts the probe as sent and timed out, with one `infoMessage` per
   errno. A round in which a send succeeded arms this notice again. When no send of the first
   round succeeds, the session emits `errorOccurred`.
+- RTT: the RTT ends at the time when the kernel received the answer, not at the read. Every
+  probe socket has `SO_TIMESTAMPNS`. Thus each `recvmsg()`, from the normal queue or the error
+  queue, also gives the arrival stamp (`CLOCK_REALTIME`, `decodeArrivalStamp()`). The session
+  converts the stamp when it reads the answer (`replyRttNs()`): RTT = (now - sentAtNs) - (wall
+  clock - stamp). It reads the wall clock first, so a delay between the two clock reads makes
+  the RTT larger, not smaller. The kernel turns the stamps on for the whole host, not for one
+  socket. Thus, while a trace runs, the kernel stamps every packet that the host receives.
+- RTT at the read: an answer without a kernel value (a TCP reset, an answer without a stamp)
+  gets RTT = now - sentAtNs. A kernel value that is not in (0, now - sentAtNs] also gives the
+  RTT at the read. Only a wall-clock step or a suspend between the arrival and the read makes
+  the converted value wrong. The wait is the time from the arrival to the read. A backward
+  step longer than the wait, and a forward step or a suspend at least as long as the RTT, give
+  a value out of range. A shorter backward step makes the RTT larger by the step, but not
+  larger than the RTT at the read. A shorter forward step or suspend makes the RTT smaller by
+  its length. The kernel turns its stamps on with a delay when the first socket of the host
+  asks for them. An answer that arrives before that gets the read time as its stamp, thus
+  about the RTT at the read.
 
 ### 3.3 Scheduling and bookkeeping
 
@@ -87,10 +105,10 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   deadline); TTL k goes at `roundStart + (k - 1) * stagger`, with
   `stagger = min(20 ms, intervalSec * 1000 / (2 * maxTtl))`, so that no burst trips the ICMP
   rate limits of routers. After a stall, the next round starts one interval later.
-- Pending table: `seq (16-bit rolling counter) -> { ttl, round, slot, sentAtNs, sentAtMs }`,
-  with RTT = now - sentAtNs at drain time, as mtr does; `sentAtMs` is the wall-clock send
-  time for the `HopSample`. It holds at most 60000 entries, so that the seq space does not
-  fill. At the cap, the session skips probes and emits one capacity
+- Pending table: `seq (16-bit rolling counter) -> { ttl, round, slot, sentAtNs, sentAtMs }`.
+  `sentAtNs` is the monotonic send time for the RTT (§3.2) and the timeout; `sentAtMs` is the
+  wall-clock send time for the `HopSample`. It holds at most 60000 entries, so that the seq
+  space does not fill. At the cap, the session skips probes and emits one capacity
   `infoMessage` per trace, as for the TCP cap. An entry older than
   `timeoutSec` leaves the table and adds `timedOut++` to its hop.
 - Every resolved probe adds one `HopSample` to its hop: the round, the RTT or a negative
@@ -128,6 +146,12 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
 - Karn's rule: after a SYN resend (`tcpi_total_retrans > 0`) the outcome counts as lost, so
   answers slower than about 1 s show as loss. Each probe has a new source port, so per-flow
   ECMP can move hops between rows (README and man state this limitation).
+- RTT: a completed handshake gives `tcpi_rtt` of `TCP_INFO` (microseconds), which the kernel
+  measures from the SYN to the SYN-ACK. The prober reads it with the resend check, in the same
+  `getsockopt()` and before it closes the socket. An ICMP answer gives the stamp of its error
+  queue entry (§3.2). An RST gives no kernel value, so it uses the RTT at the read. The socket
+  that `open()` makes to check the permission stays open with `SO_TIMESTAMPNS`. The kernel
+  turns its stamps off when the last socket that uses them closes; this socket keeps them on.
 
 ## 4. GUI (`src/gui/`, `src/main.cpp`)
 
@@ -179,8 +203,9 @@ Labels, mnemonics and button texts are verbatim upstream (`WinMTR.rc`).
   a pointer that does not move, the graph finds the nearest sample again and updates the
   tooltip and the circle. When the pointer leaves the graph, the graph hides the tooltip
   and removes the circle. As with the tooltips of Qt, there is no tooltip while no window
-  of LinMTR is active. A repaint delays the read of replies and thus makes their RTT
-  larger, so a pointer move repaints the graph only when the circle moves.
+  of LinMTR is active. A repaint costs CPU and delays the read of replies. The delay does not
+  change an RTT from the kernel (§3.2). It makes the RTT of a TCP reset, or of an answer
+  without a stamp, larger. Thus a pointer move repaints the graph only when the circle moves.
 
 ## 5. Report formats (`ReportBuilder`, shared by GUI and CLI)
 

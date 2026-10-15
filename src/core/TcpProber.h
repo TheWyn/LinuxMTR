@@ -28,8 +28,9 @@ namespace linmtr::core {
 //   Port unreachable (a REJECT firewall) counts as target reached, as in UDP mode.
 // An answer that arrives after the kernel resent the SYN counts as lost: it can
 // answer the resend, so its RTT is unknown.
-// A socket stays open until drain() reports its answer, the session discards
-// the probe (reply timeout), or the prober goes away.
+// A probe socket stays open until drain() reports its answer, the session
+// discards the probe (reply timeout), or the prober goes away. The check socket
+// of open() stays open until the prober goes away.
 class TcpProber final : public ProbeBackend
 {
 public:
@@ -40,8 +41,9 @@ public:
     TcpProber(const QHostAddress &target, quint16 port);
     ~TcpProber() override;
 
-    // Checks the target, and checks that a probe socket opens. send() makes the
-    // probe sockets. Returns 0 or an errno value.
+    // Checks the target, and checks that a probe socket opens. That socket stays
+    // open and keeps the kernel arrival stamps on. send() makes the probe sockets.
+    // Returns 0 or an errno value.
     int open() override;
     int socketCount() const override { return 1; }
 
@@ -86,6 +88,7 @@ private:
     sockaddr_storage m_destination{};
     socklen_t m_destinationLen = 0;
     bool m_open = false;
+    UniqueFd m_stampKeeper;   // the check socket of open()
     QPointer<QObject> m_context;
     std::function<void()> m_onActivity;
     ProbeMap m_probes;

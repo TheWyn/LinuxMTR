@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
+#include <ctime>
 #include <map>
 #include <memory>
 #include <vector>
@@ -31,6 +32,7 @@ using linmtr::core::ProbeEvent;
 using linmtr::core::TcpProber;
 using linmtr::core::UdpProber;
 using linmtr::core::normalizeAddress;
+using linmtr::core::replyRttNs;
 using linmtr::core::sameAddress;
 
 namespace {
@@ -59,6 +61,14 @@ TraceOptions sanitized(TraceOptions o)
     o.tcpPort = std::clamp(o.tcpPort, 1, 65535);
     o.maxRounds = std::max(0, o.maxRounds);
     return o;
+}
+
+// The clock of the kernel arrival stamps (CLOCK_REALTIME), in ns since the Unix epoch.
+qint64 wallClockNs()
+{
+    timespec now{};
+    ::clock_gettime(CLOCK_REALTIME, &now);
+    return static_cast<qint64>(now.tv_sec) * 1'000'000'000 + now.tv_nsec;
 }
 
 } // namespace
@@ -475,8 +485,11 @@ void TraceSession::Private::onProbeEvent(const ProbeEvent &ev)
 
     switch (ev.kind) {
     case ProbeEvent::Kind::Reply: {
-        const qint64 elapsed = std::max<qint64>(0, clock.nsecsElapsed() - it->sentAtNs);
-        const double rtt = static_cast<double>(elapsed) / 1e6;
+        // The kernel values exclude the time that the answer waited for this thread.
+        // replyRttNs() needs the wall clock before the monotonic clock.
+        const qint64 wallNs = wallClockNs();
+        const qint64 readNs = std::max<qint64>(0, clock.nsecsElapsed() - it->sentAtNs);
+        const double rtt = static_cast<double>(replyRttNs(ev, readNs, wallNs)) / 1e6;
         ++hop.received;
         hop.lastMs = rtt;
         if (hop.received == 1) {

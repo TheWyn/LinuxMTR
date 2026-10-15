@@ -3,12 +3,14 @@
 
 #include <QDateTime>
 #include <QSignalSpy>
+#include <QTcpServer>
 #include <QtTest>
 
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <vector>
 
 #include <arpa/inet.h>
@@ -24,18 +26,23 @@
 
 using linmtr::core::ErrQueueInfo;
 using linmtr::core::IcmpVerdict;
+using linmtr::core::ProbeEvent;
+using linmtr::core::UniqueFd;
 using linmtr::core::classifyIcmp;
+using linmtr::core::decodeArrivalStamp;
 using linmtr::core::decodeExtendedError;
+using linmtr::core::replyRttNs;
 
 Q_DECLARE_METATYPE(ErrQueueInfo::Origin)
 Q_DECLARE_METATYPE(IcmpVerdict::Kind)
+Q_DECLARE_METATYPE(TraceOptions::Protocol)
 
 namespace {
 
 constexpr std::size_t kEeSize = sizeof(sock_extended_err);
 constexpr std::size_t kHeaderSize = sizeof(cmsghdr);
 
-// Holds crafted control messages for decodeExtendedError(). put() sets cmsg_len
+// Holds crafted control messages for the decoders. put() sets cmsg_len
 // apart from the payload size, and header() sets msg_controllen, so that a test
 // can cut either one.
 struct Control
@@ -78,6 +85,27 @@ std::vector<unsigned char> errPayload(quint8 origin, quint8 type, quint8 code,
         std::memcpy(out.data() + kEeSize, offender, offenderLen);
     return out;
 }
+
+// The SO_TIMESTAMPNS payload of the decoder tests, and its value in ns.
+constexpr qint64 kStampSec = 1'760'000'000;
+constexpr long kStampNsec = 123'456'789;
+constexpr qint64 kStampNs = kStampSec * 1'000'000'000 + kStampNsec;
+
+std::vector<unsigned char> stampPayload()
+{
+    timespec ts{};
+    ts.tv_sec = kStampSec;
+    ts.tv_nsec = kStampNsec;
+    std::vector<unsigned char> out(sizeof(ts));
+    std::memcpy(out.data(), &ts, sizeof(ts));
+    return out;
+}
+
+// The time from the send to the read in the replyRtt() rows, in ns.
+constexpr qint64 kReadNs = 300'000'000;
+
+// How long the live RTT test blocks the thread while an answer waits, in ms.
+constexpr int kStallMs = 300;
 
 sockaddr_in v4(const char *text)
 {
@@ -130,10 +158,57 @@ QString loopbackPingUnavailable()
     return {};
 }
 
+// Opens a UDP socket with SO_TIMESTAMPNS on 127.0.0.1 into *hold and waits until
+// the kernel stamps its datagrams when they arrive. The kernel turns the stamps
+// on with a delay after the first socket asks for them. Until then, recvmsg()
+// gives the read time as the stamp. Keep *hold open during the test, so that the
+// stamps stay on. Returns an empty string, else the reason.
+QString arrivalStampsUnavailable(UniqueFd *hold)
+{
+    hold->reset(::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0));
+    sockaddr_in self = v4("127.0.0.1");
+    socklen_t selfLen = sizeof(self);
+    const int one = 1;
+    if (!hold->isValid()
+        || ::setsockopt(hold->get(), SOL_SOCKET, SO_TIMESTAMPNS, &one, sizeof(one)) != 0
+        || ::bind(hold->get(), reinterpret_cast<const sockaddr *>(&self), sizeof(self)) != 0
+        || ::getsockname(hold->get(), reinterpret_cast<sockaddr *>(&self), &selfLen) != 0)
+        return QStringLiteral("no time-stamped UDP socket: %1").arg(qt_error_string(errno));
+
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        const char byte = 0;
+        if (::sendto(hold->get(), &byte, 1, 0, reinterpret_cast<const sockaddr *>(&self), sizeof(self)) < 0)
+            return QStringLiteral("cannot send to 127.0.0.1: %1").arg(qt_error_string(errno));
+        QTest::qSleep(10);
+        // A stamp that the kernel takes at the read is not earlier than this time.
+        const qint64 beforeReadNs = QDateTime::currentMSecsSinceEpoch() * 1'000'000;
+        char data = 0;
+        iovec iov{&data, 1};
+        alignas(cmsghdr) unsigned char control[64];
+        msghdr msg{};
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = control;
+        msg.msg_controllen = sizeof(control);
+        if (::recvmsg(hold->get(), &msg, MSG_DONTWAIT) < 0)
+            continue;
+        // Not decodeArrivalStamp(): a bug there must fail the RTT test, not skip it.
+        const cmsghdr *c = CMSG_FIRSTHDR(&msg);
+        timespec ts{};
+        if (c != nullptr && c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_TIMESTAMPNS) {
+            std::memcpy(&ts, CMSG_DATA(c), sizeof(ts));
+            if (qint64(ts.tv_sec) * 1'000'000'000 + ts.tv_nsec < beforeReadNs)
+                return {};
+        }
+    }
+    return QStringLiteral("the kernel did not turn on the arrival stamps");
+}
+
 } // namespace
 
-// Feeds crafted MSG_ERRQUEUE control data to decodeExtendedError(), checks the
-// classifyIcmp() table, and runs short live traces over loopback.
+// Feeds crafted control data to decodeExtendedError() and decodeArrivalStamp(),
+// checks the classifyIcmp() table and the replyRttNs() rule, and runs short live
+// traces over loopback.
 class TestCoreParsers : public QObject
 {
     Q_OBJECT
@@ -148,10 +223,17 @@ private slots:
     void decodeWrongLevelOrType();
     void decodeSkipsOtherMessages();
     void decodeZeroLengthControl();
+    void decodeStamp_data();
+    void decodeStamp();
+    void decodeStampSkipsOtherMessages();
+    void replyRtt_data();
+    void replyRtt();
     void classify_data();
     void classify();
     void hopSampleOrderAndCap();
     void liveLoopbackTrace();
+    void liveStalledReadRtt_data();
+    void liveStalledReadRtt();
     void reportRunnerStopsOnSignal();
 };
 
@@ -382,6 +464,92 @@ void TestCoreParsers::decodeZeroLengthControl()
     verifyUntouched(info);
 }
 
+void TestCoreParsers::decodeStamp_data()
+{
+    // level, type: the message header. cmsgLen: the cmsg_len field. controlLen:
+    // msg_controllen. capacity: the real buffer size that the caller passes.
+    QTest::addColumn<int>("level");
+    QTest::addColumn<int>("type");
+    QTest::addColumn<qulonglong>("cmsgLen");
+    QTest::addColumn<qulonglong>("controlLen");
+    QTest::addColumn<qulonglong>("capacity");
+    QTest::addColumn<qlonglong>("stampNs");
+
+    const int sol = SOL_SOCKET;
+    const int ns = SCM_TIMESTAMPNS;
+    const qulonglong full = CMSG_LEN(sizeof(timespec));
+    const qulonglong cap = sizeof(Control::bytes);
+
+    QTest::newRow("complete") << sol << ns << full << full << cap << kStampNs;
+    QTest::newRow("capacity: complete") << sol << ns << full << cap << full << kStampNs;
+    QTest::newRow("SOL_SOCKET, SCM_TIMESTAMP") << sol << int(SCM_TIMESTAMP) << full << full << cap << 0ll;
+    QTest::newRow("IPPROTO_IP, SCM_TIMESTAMPNS") << int(IPPROTO_IP) << ns << full << full << cap << 0ll;
+    QTest::newRow("cmsg_len: timespec - 1") << sol << ns << full - 1 << full << cap << 0ll;
+    QTest::newRow("cmsg_len: zero") << sol << ns << 0ull << full << cap << 0ll;
+    QTest::newRow("controllen: timespec - 1") << sol << ns << full << full - 1 << cap << 0ll;
+    QTest::newRow("controllen: zero") << sol << ns << full << 0ull << cap << 0ll;
+    QTest::newRow("capacity: timespec - 1") << sol << ns << full << cap << full - 1 << 0ll;
+}
+
+void TestCoreParsers::decodeStamp()
+{
+    QFETCH(int, level);
+    QFETCH(int, type);
+    QFETCH(qulonglong, cmsgLen);
+    QFETCH(qulonglong, controlLen);
+    QFETCH(qulonglong, capacity);
+    QFETCH(qlonglong, stampNs);
+
+    Control ctl;
+    ctl.put(0, level, type, stampPayload(), cmsgLen);
+    msghdr *msg = ctl.header(controlLen);
+    QCOMPARE(decodeArrivalStamp(msg, capacity), stampNs);
+    QCOMPARE(qulonglong(msg->msg_controllen), qMin(controlLen, capacity));
+}
+
+void TestCoreParsers::decodeStampSkipsOtherMessages()
+{
+    const sockaddr_in off = v4("192.0.2.5");
+    const auto err = errPayload(SO_EE_ORIGIN_ICMP, 11, 0, &off, sizeof(off));
+    const auto stamp = stampPayload();
+
+    Control ctl;
+    std::size_t end = ctl.put(0, IPPROTO_IP, IP_RECVERR, err, CMSG_LEN(err.size()));
+    end = ctl.put(end, SOL_SOCKET, SCM_TIMESTAMPNS, stamp, CMSG_LEN(stamp.size()));
+    QCOMPARE(decodeArrivalStamp(ctl.header(end), sizeof(ctl.bytes)), kStampNs);
+}
+
+void TestCoreParsers::replyRtt_data()
+{
+    // rttUs and arrivalNs: the kernel values of the event. The read is kReadNs
+    // after the send, when the wall clock shows kStampNs.
+    QTest::addColumn<uint>("rttUs");
+    QTest::addColumn<qlonglong>("arrivalNs");
+    QTest::addColumn<qlonglong>("rttNs");
+
+    const qlonglong sent = kStampNs - kReadNs;   // the send time on the wall clock
+    QTest::newRow("no kernel value") << 0u << 0ll << kReadNs;
+    QTest::newRow("stamp: 1 ms after the send") << 0u << sent + 1'000'000 << 1'000'000ll;
+    QTest::newRow("stamp: at the send") << 0u << sent << kReadNs;
+    QTest::newRow("stamp: before the send (forward step, suspend)") << 0u << sent - 1 << kReadNs;
+    QTest::newRow("stamp: after the read (backward step)") << 0u << kStampNs + 1 << kReadNs;
+    QTest::newRow("tcpi_rtt: 23 us") << 23u << 0ll << 23'000ll;
+    QTest::newRow("tcpi_rtt: above the read") << 300'001u << 0ll << kReadNs;
+    QTest::newRow("tcpi_rtt and a stamp") << 23u << sent + 1'000'000 << 23'000ll;
+}
+
+void TestCoreParsers::replyRtt()
+{
+    QFETCH(uint, rttUs);
+    QFETCH(qlonglong, arrivalNs);
+    QFETCH(qlonglong, rttNs);
+
+    ProbeEvent ev;
+    ev.rttUs = rttUs;
+    ev.arrivalNs = arrivalNs;
+    QCOMPARE(replyRttNs(ev, kReadNs, kStampNs), rttNs);
+}
+
 void TestCoreParsers::classify_data()
 {
     QTest::addColumn<ErrQueueInfo::Origin>("origin");
@@ -516,6 +684,101 @@ void TestCoreParsers::liveLoopbackTrace()
     QCOMPARE(session.state(), TraceSession::State::Tracing);
     QCOMPARE(session.roundsCompleted(), 3);
     QCOMPARE(session.hops().constFirst().sent, quint64(3));
+    session.stop();
+}
+
+void TestCoreParsers::liveStalledReadRtt_data()
+{
+    QTest::addColumn<TraceOptions::Protocol>("protocol");
+    QTest::addColumn<bool>("listening");   // TCP: the port accepts the connection, else it resets it
+    QTest::addColumn<bool>("kernelRtt");   // the RTT comes from the kernel, else from the read
+
+    using P = TraceOptions::Protocol;
+    QTest::newRow("icmp echo reply: stamp") << P::Icmp << false << true;
+    QTest::newRow("udp port unreachable: stamp") << P::Udp << false << true;
+    QTest::newRow("tcp handshake: tcpi_rtt") << P::Tcp << true << true;
+    QTest::newRow("tcp reset: read time") << P::Tcp << false << false;
+}
+
+// The answer waits in the socket while the thread is busy (for example, a
+// repaint). An RTT from the kernel does not include the wait. A TCP reset has
+// no kernel value: its RTT ends at the read, so it includes the wait.
+// Not covered: the stamps of TCP probes and of the UDP sockets after slot 0.
+// Loopback sends no ICMP error to a TCP SYN, and round 1 uses slot 0.
+void TestCoreParsers::liveStalledReadRtt()
+{
+    QFETCH(TraceOptions::Protocol, protocol);
+    QFETCH(bool, listening);
+    QFETCH(bool, kernelRtt);
+
+    if (protocol == TraceOptions::Protocol::Icmp) {
+        if (const QString reason = loopbackPingUnavailable(); !reason.isEmpty())
+            QSKIP(qPrintable(reason));
+    }
+    // UDP: the probe for TTL 1 goes to 127.0.0.1:33434. A socket that receives on
+    // that port takes the probe, and no port unreachable comes back. This socket
+    // holds the port, so that the other sockets of the test cannot get it. Its
+    // connect() makes it take only datagrams from port 9, thus not the probe.
+    UniqueFd portHold;
+    if (protocol == TraceOptions::Protocol::Udp) {
+        portHold.reset(::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0));
+        sockaddr_in port = v4("127.0.0.1");
+        port.sin_port = htons(linmtr::core::kUdpBasePort);
+        sockaddr_in discard = v4("127.0.0.1");
+        discard.sin_port = htons(9);
+        if (::bind(portHold.get(), reinterpret_cast<const sockaddr *>(&port), sizeof(port)) != 0
+            || ::connect(portHold.get(), reinterpret_cast<const sockaddr *>(&discard), sizeof(discard)) != 0)
+            QSKIP(qPrintable(QStringLiteral("UDP port 33434 on 127.0.0.1: %1").arg(qt_error_string(errno))));
+    }
+    UniqueFd stampHold;
+    if (const QString reason = arrivalStampsUnavailable(&stampHold); !reason.isEmpty())
+        QSKIP(qPrintable(reason));
+
+    // A listening port completes the handshake. A connection to a bound port that
+    // does not listen gets a reset, and no other program can take that port.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    UniqueFd closedPort(::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0));
+    sockaddr_in closed = v4("127.0.0.1");
+    socklen_t closedLen = sizeof(closed);
+    QVERIFY(closedPort.isValid());
+    QVERIFY(::bind(closedPort.get(), reinterpret_cast<const sockaddr *>(&closed), sizeof(closed)) == 0);
+    QVERIFY(::getsockname(closedPort.get(), reinterpret_cast<sockaddr *>(&closed), &closedLen) == 0);
+
+    TraceOptions options;
+    options.protocol = protocol;
+    options.maxRounds = 1;
+    options.resolveNames = false;
+    options.tcpPort = listening ? server.serverPort() : ntohs(closed.sin_port);
+
+    TraceSession session;
+    QSignalSpy errors(&session, &TraceSession::errorOccurred);
+    session.start(QStringLiteral("127.0.0.1"), options);
+    // start() posts the socket setup, which sends TTL 1 at once. This event runs
+    // next, before the event loop reads the sockets, so the answer waits.
+    bool stalledInFlight = false;
+    QTimer::singleShot(0, &session, [&session, &stalledInFlight] {
+        const QList<HopStats> hops = session.hops();
+        stalledInFlight = hops.size() == 1 && hops.constFirst().sent == 1
+                          && hops.constFirst().received == 0;
+        QTest::qSleep(kStallMs);
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= 1 || !errors.isEmpty(), 10000);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QVERIFY(stalledInFlight);
+    QCOMPARE(session.options().protocol, protocol);
+
+    const QList<HopStats> hops = session.hops();
+    QCOMPARE(hops.size(), 1);
+    const HopStats &hop = hops.constFirst();
+    QCOMPARE(hop.received, quint64(1));
+    QVERIFY(hop.isTarget);
+    const QByteArray rtt = QByteArray::number(hop.lastMs);
+    // 0.001 ms: one microsecond, the unit of tcpi_rtt. A smaller RTT has a wrong unit.
+    if (kernelRtt)
+        QVERIFY2(hop.lastMs >= 0.001 && hop.lastMs < kStallMs / 3.0, rtt.constData());
+    else
+        QVERIFY2(hop.lastMs >= kStallMs, rtt.constData());
     session.stop();
 }
 

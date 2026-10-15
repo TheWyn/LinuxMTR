@@ -85,6 +85,9 @@ struct ProbeEvent
                                 // hosts, a REJECT firewall).
     QHostAddress responder;   // null when the kernel reported no offender
     QString errorText;        // Kind::Error only
+    qint64 arrivalNs = 0;     // kernel arrival stamp, CLOCK_REALTIME ns since the epoch; 0 = none
+    quint32 rttUs = 0;        // TCP handshake: tcpi_rtt, the RTT that the kernel measured,
+                              // in microseconds; 0 = none
 };
 
 // Decoded MSG_ERRQUEUE entry (sock_extended_err + msg_name).
@@ -120,6 +123,19 @@ IcmpVerdict classifyIcmp(ErrQueueInfo::Origin origin, quint8 type, quint8 code);
 // msg->msg_controllen to it. Returns false and does not change info when no
 // complete extended error is present.
 bool decodeExtendedError(msghdr *msg, std::size_t controlCapacity, ErrQueueInfo *info);
+
+// Decodes the SO_TIMESTAMPNS control message of a recvmsg() result: the time
+// when the kernel received the packet, in ns since the Unix epoch (CLOCK_REALTIME).
+// controlCapacity is the real size of msg->msg_control; the function clamps
+// msg->msg_controllen to it. Returns 0 when no complete stamp is present.
+qint64 decodeArrivalStamp(msghdr *msg, std::size_t controlCapacity);
+
+// Returns the RTT of a Reply event in ns. The kernel value is ev.rttUs, else the
+// stamp converted at the read: readNs - (wallNs - ev.arrivalNs). A kernel value in
+// (0, readNs] is the result; else the result is readNs. readNs is the monotonic
+// time from the send to the read. wallNs is CLOCK_REALTIME at the read. Read it
+// before readNs: a delay between the two reads then makes the result larger.
+qint64 replyRttNs(const ProbeEvent &ev, qint64 readNs, qint64 wallNs);
 
 // Address helpers. sameAddress() ignores IPv6 scope ids and is false for null addresses.
 bool sameAddress(const QHostAddress &a, const QHostAddress &b);
@@ -184,7 +200,8 @@ public:
 
     // Reads both queues of every socket until EAGAIN, at most 1024 messages per
     // call. Each message decodes into zero or more events for the sink. Every
-    // event carries the slot of the socket it arrived on. Never blocks.
+    // event carries the slot of the socket it arrived on and the arrival stamp
+    // of its message. Never blocks.
     void drain(const EventSink &sink) override;
 
     // Creates Read and Exception notifiers (children of context) on each socket.
