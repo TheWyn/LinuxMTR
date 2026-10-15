@@ -186,6 +186,9 @@ Labels, mnemonics and button texts are verbatim upstream (`WinMTR.rc`).
 - Both graphs: the X axis is a window of the newest rounds, one round for each 3 px of plot
   width (at least 2, at most `kHistoryRounds`). The newest round is at the right edge, and
   older rounds leave at the left edge, so the lines do not compress as the history grows.
+  A line that is wider than 1 device pixel (the line of the current row, and each line on a
+  screen with a scale above 1) is a set of separate segments, not one polyline. Qt strokes
+  a wide polyline as one path, which takes from tens of ms to seconds for a full window.
   Time labels under the X axis use the send times of the visible rounds. The step between
   them is the smallest of 1 s .. 24 h (`labelStepMs()`) that keeps the labels at least 1.5
   label widths apart. The labels are at local-time multiples of the step, and each label

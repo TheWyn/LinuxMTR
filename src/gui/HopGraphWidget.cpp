@@ -5,6 +5,7 @@
 
 #include <QApplication>
 #include <QDateTime>
+#include <QLineF>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPolygonF>
@@ -295,12 +296,26 @@ void HopGraphWidget::paintEvent(QPaintEvent *)
     p.setRenderHint(QPainter::Antialiasing);
     const auto drawSeries = [&](const Series &s, int penWidth) {
         p.setPen(QPen(s.color, penWidth));
+        // Qt strokes a polyline that is wider than 1 device pixel (the highlight,
+        // a scaled screen) as one path, which takes from tens of ms to seconds for
+        // a full window. Separate lines go to its line rasterizer. Their square caps
+        // overlap at the joints, so the line is a little heavier there. The colours
+        // must be opaque, else each joint shows as a dark dot. A thin line stays one
+        // polyline, which is faster and has no overlap.
+        const bool wide = penWidth * p.deviceTransform().m11() > 1;
         QPolygonF run;   // replies in consecutive rounds
+        QList<QLineF> lines;
         const auto flush = [&] {
-            if (run.size() == 1)
+            if (run.size() == 1) {
                 p.drawPoint(run.constFirst());
-            else if (run.size() > 1)
+            } else if (run.size() > 1 && wide) {
+                lines.clear();
+                for (qsizetype i = 1; i < run.size(); ++i)
+                    lines.append(QLineF(run.at(i - 1), run.at(i)));
+                p.drawLines(lines);
+            } else if (run.size() > 1) {
                 p.drawPolyline(run);
+            }
             run.clear();
         };
         int prevRound = 0;

@@ -8,7 +8,9 @@
 #include <QToolTip>
 #include <QtTest>
 
+#include <algorithm>
 #include <cmath>
+#include <ctime>
 
 #include "gui/HopGraphWidget.h"
 
@@ -69,6 +71,14 @@ QList<HopSample> curve(double base, double amplitude, int lostRound = 0)
     return samples;
 }
 
+// The CPU time of this thread in ns. The time of other tasks on a busy machine does not count.
+qint64 threadCpuNs()
+{
+    timespec ts{};
+    ::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return qint64(ts.tv_sec) * 1'000'000'000 + ts.tv_nsec;
+}
+
 // Counts the paints that update() causes; render() also counts.
 class PaintCounter : public HopGraphWidget
 {
@@ -102,6 +112,9 @@ private slots:
     void labelStepMs();
     void timeLabels();
     void labelsDoNotOverlap();
+    void thinLineIsOnePolyline();
+    void wideLinesStayFast_data();
+    void wideLinesStayFast();
 };
 
 void TestHopGraphWidget::niceCeiling_data()
@@ -173,6 +186,11 @@ void TestHopGraphWidget::highlightDrawnLast()
     const QImage image = render(graph);
     QVERIFY(countClose(image, kRed) > 20);
     QCOMPARE(countClose(image, kBlue), 0);
+
+    // The highlight is wider than the same line that is not the highlight.
+    HopGraphWidget thin;
+    thin.setSeries({{QStringLiteral("1"), kRed, curve(40.0, 20.0)}});
+    QVERIFY(countClose(image, kRed) > 3 * countClose(render(thin), kRed) / 2);
 }
 
 // 1000 rounds do not fit into the window: round 1 leaves at the left edge and
@@ -389,9 +407,99 @@ void TestHopGraphWidget::labelsDoNotOverlap()
              qPrintable(QStringLiteral("labels from x %1 to %2").arg(minX).arg(maxX)));
 }
 
+// A 1 px line stays one polyline. Separate lines would blend twice where they
+// meet and make those pixels darker. The flat line at 12 ms (ceiling 20) is at
+// y 73.6. One blend gives row 73 the colour of x 390, between rounds 29 and 30,
+// and no pixel of the row may be darker (green falls as red covers the base).
+void TestHopGraphWidget::thinLineIsOnePolyline()
+{
+    QList<HopSample> samples;
+    for (int round = 1; round <= 30; ++round)
+        samples.append(HopSample{round, 12.0f});
+    HopGraphWidget graph;
+    graph.setSeries({{QStringLiteral("1"), kRed, samples}});
+    const QImage image = render(graph);
+    const int row = static_cast<int>(kBaseline - 12.0 / 20.0 * (kBaseline - 8));
+    const int oneBlend = qGreen(image.pixel(kPlotRight - 2, row));
+    QVERIFY(oneBlend < 128);
+    for (int x = kPlotLeft; x <= kPlotRight; ++x)
+        QVERIFY2(qGreen(image.pixel(x, row)) >= oneBlend, qPrintable(QStringLiteral("x %1").arg(x)));
+}
+
+void TestHopGraphWidget::wideLinesStayFast_data()
+{
+    QTest::addColumn<int>("highlight");     // the series drawn 2 px wide; -1 = none
+    QTest::addColumn<qreal>("dpr");         // device pixel ratio of the image
+    QTest::addColumn<int>("lossEvery");     // a lost probe every lossEvery rounds; 0 = none
+    QTest::addColumn<double>("maxRatio");   // largest render time against 1 px lines at scale 1
+
+    QTest::newRow("highlight, scale 1") << 0 << qreal(1) << 0 << 5.0;
+    QTest::newRow("scale 2") << -1 << qreal(2) << 0 << 12.0;
+    // Many short runs: each run draws only its own lines.
+    QTest::newRow("highlight, a lost probe every 10 rounds") << 0 << qreal(1) << 10 << 5.0;
+}
+
+// Qt strokes a polyline that is wider than 1 device pixel as one path. For the
+// graph of this test, that takes about 40 ms for the highlight and 0.34 s at
+// scale 2. The test compares the render times with those of the 1 px lines at
+// scale 1, so that the speed of the machine cancels out. It counts the CPU time
+// of this thread, so that other tasks on a busy machine do not change the result.
+void TestHopGraphWidget::wideLinesStayFast()
+{
+    QFETCH(int, highlight);
+    QFETCH(qreal, dpr);
+    QFETCH(int, lossEvery);
+    QFETCH(double, maxRatio);
+
+    constexpr int kRounds = 1200;
+    constexpr int kWideWidth = kPlotLeft + 3 * kRounds + 8;   // the window holds all rounds
+    QList<HopGraphWidget::Series> series;
+    for (int i = 0; i < 4; ++i) {
+        QList<HopSample> samples;
+        for (int round = 1; round <= kRounds; ++round) {
+            // Jitter: the line changes direction at each sample, as real RTTs do.
+            const float ms = lossEvery > 0 && round % lossEvery == 0
+                ? -1.0f
+                : static_cast<float>(20 + 10 * i + ((round + i) % 2 == 0 ? 1.5 : 0.0));
+            samples.append(HopSample{round, ms, kEpochMs + round * 1000});
+        }
+        series.append({QString::number(i + 1), HopGraphWidget::seriesColor(i), samples});
+    }
+    HopGraphWidget plain;
+    HopGraphWidget wide;
+    for (HopGraphWidget *graph : {&plain, &wide})
+        graph->resize(kWideWidth, kHeight);
+    plain.setSeries(series);
+    wide.setSeries(series, highlight);
+    // The format of the backing store of a window.
+    QImage plainImage(kWideWidth, kHeight, QImage::Format_ARGB32_Premultiplied);
+    QImage wideImage(QSize(kWideWidth, kHeight) * dpr, QImage::Format_ARGB32_Premultiplied);
+    wideImage.setDevicePixelRatio(dpr);
+
+    // Interleaved, so that a change of the CPU speed affects both alike; medians.
+    QList<qint64> plainNs;
+    QList<qint64> wideNs;
+    for (int i = 0; i < 9; ++i) {
+        qint64 start = threadCpuNs();
+        plain.render(&plainImage);
+        plainNs.append(threadCpuNs() - start);
+        start = threadCpuNs();
+        wide.render(&wideImage);
+        wideNs.append(threadCpuNs() - start);
+    }
+    std::sort(plainNs.begin(), plainNs.end());
+    std::sort(wideNs.begin(), wideNs.end());
+    const double ratio = double(wideNs.at(4)) / double(qMax<qint64>(1, plainNs.at(4)));
+    QVERIFY2(ratio < maxRatio, qPrintable(QStringLiteral("%1 ms against %2 ms")
+                                              .arg(wideNs.at(4) / 1e6).arg(plainNs.at(4) / 1e6)));
+}
+
 int main(int argc, char *argv[])
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
+    // Scale 1 for the widgets: a test sets a scale only through its image.
+    qunsetenv("QT_SCALE_FACTOR");
+    qunsetenv("QT_SCREEN_SCALE_FACTORS");
     QApplication app(argc, argv);
     TestHopGraphWidget test;
     return QTest::qExec(&test, argc, argv);
