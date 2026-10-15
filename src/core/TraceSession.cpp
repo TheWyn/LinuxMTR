@@ -71,7 +71,14 @@ qint64 wallClockNs()
     return static_cast<qint64>(now.tv_sec) * 1'000'000'000 + now.tv_nsec;
 }
 
+linmtr::core::BackendFactory testBackendFactory;   // set only by tests
+
 } // namespace
+
+void linmtr::core::setBackendFactoryForTests(BackendFactory factory)
+{
+    testBackendFactory = std::move(factory);
+}
 
 struct TraceSession::Private
 {
@@ -334,7 +341,9 @@ void TraceSession::Private::beginTracing()
     QStringList notices;
     std::unique_ptr<ProbeBackend> p;
 
-    if (options.protocol == TraceOptions::Protocol::Tcp) {
+    if (testBackendFactory) {
+        p = testBackendFactory();
+    } else if (options.protocol == TraceOptions::Protocol::Tcp) {
         // The user selected TCP, so no other protocol replaces it. A SYN
         // carries no payload: pingSizeBytes does not apply.
         p = std::make_unique<TcpProber>(targetAddress, static_cast<quint16>(options.tcpPort));
@@ -510,7 +519,12 @@ void TraceSession::Private::onProbeEvent(const ProbeEvent &ev)
         ++hop.timedOut;
         hop.addSample(it->round, -1.0f, it->sentAtMs);
         hop.errorText = ev.errorText;
-        updateHopAddress(hop, ev.responder, false);
+        // An ICMP error from a router does not change the hop address, as upstream
+        // (SetName() only). A router can send the error for each TTL up to maxHops.
+        // With its address on these hops, currentMaxTtl() stops the probes at that
+        // router until the trace ends. An error from the target makes this the target hop.
+        if (sameAddress(ev.responder, targetAddress))
+            updateHopAddress(hop, ev.responder, true);
         break;
     case ProbeEvent::Kind::Lost:
         ++hop.timedOut;

@@ -308,7 +308,7 @@ order and report layout. Its internals are new and designed for Linux.
 | Defaults | Interval 1.0 s, ping size 64, LRU 128, DNS on, max hops 30 | Same |
 | New options | **Max hops**, **Protocol**, **TCP port**, **IP version**, **Reply timeout**, **Show IP next to hostname**, **Show route graph** | None |
 | About | An about label in **Options** | **License and Credits** dialog |
-| Host properties | Non-modal; it updates while the trace runs. A hop without an address shows its real statistics and `No response from host`. For an ICMP error, the error text is the comment and **Name** shows the host name or address. | A modal snapshot. Zeros and an empty comment; the error text is **Name** and the comment is `Host alive.` |
+| Host properties | Non-modal; it updates while the trace runs, and it shows real statistics. For a hop without an address, the comment is the ICMP error text or `No response from host`. For a hop with an address, **Name** shows its host name or address, and the comment is the ICMP error text or `Host alive.` | A modal snapshot. For a hop without an address, the statistics are zeros, and the comment is the ICMP error text or empty. For a hop with an address, **Name** shows the ICMP error text instead of the host name, and the comment is `Host alive.` |
 | Graphs | Per-hop graph in Host properties; optional route graph under the table | None |
 | Host history | Newest first; a host that you trace again moves to the top. A host goes in only after its name resolved, as in WinMTR. | New hosts at the end, no reordering |
 | Reports | Same layout; title `LinMTR statistics` (same length as `WinMTR statistics`, so columns align); `\n` line endings | `\r\n` line endings |

@@ -17,7 +17,9 @@ struct HopSample
 struct HopStats
 {
     int ttl = 0;                 // 1-based hop number (the "Nr" column)
-    QHostAddress address;        // latest responder; isNull() until a reply arrives
+    QHostAddress address;        // sender of the latest reply, or of an ICMP error from the
+                                 // target (other ICMP errors keep it); isNull() until the
+                                 // first such answer
     QString hostname;            // reverse-DNS result; empty until resolved
     QString errorText;           // WinMTR ICMP error string; displayHost() shows it first
     quint64 sent = 0;            // probes sent, including those still in flight

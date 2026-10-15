@@ -12,6 +12,7 @@
 #include <array>
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <vector>
 
 #include <netinet/in.h>
@@ -177,6 +178,13 @@ public:
     // The backend releases what the probe holds.
     virtual void discard(quint16 seq) { Q_UNUSED(seq); }
 };
+
+// Test seam: while a factory is set, TraceSession takes its backend from the
+// factory. It does not call open() on that backend and opens no probe socket.
+// The factory must not return nullptr: the session then opens a real UDP
+// backend. The application never sets a factory.
+using BackendFactory = std::function<std::unique_ptr<ProbeBackend>()>;
+void setBackendFactoryForTests(BackendFactory factory);
 
 // Non-blocking datagram socket(s) that send TTL-limited probes to one target and
 // decode both the normal receive queue and the IP_RECVERR error queue.

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Wyn
 
 #include <QDateTime>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QtTest>
@@ -11,6 +12,8 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include <arpa/inet.h>
@@ -140,6 +143,36 @@ void verifyUntouched(const ErrQueueInfo &info)
     QVERIFY(info.offender.isNull());
 }
 
+// Answers each probe at once with the event that answer() gives for its TTL.
+// The session reads the answers at its next pump tick.
+class FakeBackend : public linmtr::core::ProbeBackend
+{
+public:
+    explicit FakeBackend(std::function<ProbeEvent(int)> answer) : m_answer(std::move(answer)) {}
+
+    int open() override { return 0; }
+    int socketCount() const override { return 1; }
+    int send(int ttl, quint16 seq, int slot) override
+    {
+        ProbeEvent ev = m_answer(ttl);
+        ev.hasSeq = true;
+        ev.seq = seq;
+        ev.slot = slot;
+        m_answers.push_back(ev);
+        return 0;
+    }
+    void drain(const EventSink &sink) override
+    {
+        for (const ProbeEvent &ev : std::exchange(m_answers, {}))
+            sink(ev);
+    }
+    void attachNotifiers(QObject *, const std::function<void()> &) override {}
+
+private:
+    std::function<ProbeEvent(int)> m_answer;
+    std::vector<ProbeEvent> m_answers;
+};
+
 // Returns an empty string when this process can send an ICMP echo request to
 // 127.0.0.1 through an unprivileged ping socket, else the reason it cannot.
 QString loopbackPingUnavailable()
@@ -207,8 +240,8 @@ QString arrivalStampsUnavailable(UniqueFd *hold)
 } // namespace
 
 // Feeds crafted control data to decodeExtendedError() and decodeArrivalStamp(),
-// checks the classifyIcmp() table and the replyRttNs() rule, and runs short live
-// traces over loopback.
+// and checks the classifyIcmp() table and the replyRttNs() rule. Also drives a
+// session through a fake backend and runs short live traces over loopback.
 class TestCoreParsers : public QObject
 {
     Q_OBJECT
@@ -231,6 +264,8 @@ private slots:
     void classify_data();
     void classify();
     void hopSampleOrderAndCap();
+    void sessionIcmpError_data();
+    void sessionIcmpError();
     void liveLoopbackTrace();
     void liveStalledReadRtt_data();
     void liveStalledReadRtt();
@@ -639,6 +674,83 @@ void TestCoreParsers::hopSampleOrderAndCap()
     QCOMPARE(full.history.size(), qsizetype(HopStats::kHistoryRounds));
     QCOMPARE(full.history.constFirst().round, 6);
     QCOMPARE(full.history.constLast().round, HopStats::kHistoryRounds + 5);
+}
+
+void TestCoreParsers::sessionIcmpError_data()
+{
+    QTest::addColumn<QString>("sender");   // sends the ICMP error for each TTL from 3 up
+    QTest::addColumn<int>("rows");         // hops() while the target is down
+
+    QTest::newRow("error from a router") << QStringLiteral("192.0.2.2") << 5;
+    QTest::newRow("error from the target") << QStringLiteral("192.0.2.9") << 3;
+}
+
+// Hops 1 and 2 are the routers 192.0.2.1 and 192.0.2.2, and the target
+// 192.0.2.9 is at hop 3. While the target is down, the sender answers each TTL
+// from 3 to maxHops with "Destination host unreachable.". An error from a router
+// gives no hop address. Else all later hops get the address of router 2, and the
+// probes stop at TTL 2 until the trace ends. An error from the target makes hop 3
+// the target hop. When the target is up again, hop 3 is the target hop in both cases.
+// An error after that does not change the target hop.
+void TestCoreParsers::sessionIcmpError()
+{
+    QFETCH(QString, sender);
+    QFETCH(int, rows);
+
+    const QHostAddress target(QStringLiteral("192.0.2.9"));
+    const bool fromTarget = QHostAddress(sender) == target;
+    bool targetUp = false;
+    const auto answer = [&](int ttl) {
+        ProbeEvent ev;
+        if (ttl < 3) {
+            ev.responder = QHostAddress(QStringLiteral("192.0.2.%1").arg(ttl));
+        } else if (targetUp) {
+            ev.responder = target;
+            ev.reachedTarget = true;
+        } else {
+            ev.kind = ProbeEvent::Kind::Error;
+            ev.responder = QHostAddress(sender);
+            ev.errorText = QStringLiteral("Destination host unreachable.");
+        }
+        return ev;
+    };
+    linmtr::core::setBackendFactoryForTests([&answer] { return std::make_unique<FakeBackend>(answer); });
+    const auto restore = qScopeGuard([] { linmtr::core::setBackendFactoryForTests({}); });
+
+    TraceOptions options;
+    options.intervalSec = 0.1;
+    options.maxHops = 5;
+    options.resolveNames = false;
+    TraceSession session;
+    QSignalSpy errors(&session, &TraceSession::errorOccurred);
+    session.start(target.toString(), options);
+    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= 3 || !errors.isEmpty(), 10000);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    const QList<HopStats> down = session.hops();
+    QCOMPARE(down.size(), rows);
+    for (int i = 2; i < rows; ++i) {
+        const HopStats &hop = down.at(i);
+        QCOMPARE(hop.errorText, QStringLiteral("Destination host unreachable."));
+        QVERIFY(hop.sent >= 3);   // each round probes it
+        QCOMPARE(hop.received, quint64(0));
+        QCOMPARE(hop.address, fromTarget ? target : QHostAddress());
+        QCOMPARE(hop.isTarget, fromTarget);
+    }
+
+    targetUp = true;
+    QTRY_VERIFY_WITH_TIMEOUT(session.hops().size() == 3 && session.hops().at(2).received > 0, 10000);
+    const HopStats hop = session.hops().at(2);
+    QCOMPARE(hop.address, target);
+    QVERIFY(hop.isTarget);
+    QVERIFY(hop.errorText.isEmpty());
+
+    targetUp = false;
+    QTRY_VERIFY_WITH_TIMEOUT(!session.hops().value(2).errorText.isEmpty(), 10000);
+    QCOMPARE(session.hops().size(), 3);
+    QCOMPARE(session.hops().at(2).address, target);
+    QVERIFY(session.hops().at(2).isTarget);
+    session.stop();
 }
 
 void TestCoreParsers::liveLoopbackTrace()

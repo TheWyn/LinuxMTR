@@ -78,6 +78,11 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   Destination unreachable gives a WinMTR error string (`classifyIcmp()`) in `errorText` and
   does not count as received, as upstream. A port unreachable for UDP and TCP probes means
   target reached. A local error (`SO_EE_ORIGIN_LOCAL`) makes the probe lost at once.
+- An answer that gives `errorText` does not change the hop address or `isTarget`, as upstream
+  (`SetName()` only). A router can send the error for each TTL up to `maxHops`. Then each of
+  these rows shows the error text, as upstream. With the address of the router on these rows,
+  the trimming (§3.3) stops the probes at that router until the trace ends. Exception: an
+  error from the target address makes the hop the target hop (§8 item 15).
 - A failed `sendto()` counts the probe as sent and timed out, with one `infoMessage` per
   errno. A round in which a send succeeded arms this notice again. When no send of the first
   round succeeds, the session emits `errorOccurred`.
@@ -119,7 +124,8 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
 - `roundCompleted(n)` fires when every probe of round n has an answer or timed out. With
   `maxRounds > 0`, no round starts after that many; draining continues until the last round
   resolves (report mode sends exactly `--cycles` rounds).
-- A hop keeps its latest responder and resolves the name again when the responder changes.
+- A hop keeps the address of its latest reply or of an ICMP error from the target (§3.2). It
+  resolves the name again when the address changes.
 - Trimming (upstream `GetMax()`): `maxTtl` is the lowest TTL whose hop is the target (target
   address or `isTarget`), and probing stops beyond it. Else, trailing hops go while the last
   two have the same address. `hops()` returns only the rows `1..maxTtl` with `sent > 0`.
@@ -283,6 +289,8 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
   exactly one place. `CMakeLists.txt` globs `src/**/*.{cpp,h}`: new files need no CMake edit.
   All sources except `main.cpp` go into the static library `linmtr_lib`, which the binary and
   the QtTest tests in `tests/` link. `ctest` runs the tests, and so does the PKGBUILD `check()`.
+  A test can give `TraceSession` a fake backend (`setBackendFactoryForTests()` in `Prober.h`),
+  so that it drives the session without probe sockets.
 
 ## 8. Known deviations from WinMTR
 
@@ -295,8 +303,10 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
 7. New options: `Max hops`, `Protocol`, `TCP port`, `IP version`, `Reply timeout`,
    `Show IP next to hostname`.
 8. Host name and IP display (issue #4) and hop copy (issue #10); upstream has neither.
-9. Host properties: real statistics and `No response from host` for a hop without an address
-   (upstream: zeros); an ICMP error is the comment, not the Name (upstream: Name).
+9. Host properties: a hop without an address shows its real statistics (upstream: zeros).
+   Without an ICMP error, its comment is `No response from host` (upstream: empty). On a hop
+   with an address, an ICMP error is the comment, not the Name (upstream: Name, and the
+   comment `Host alive.`).
 10. Host history: newest first, without duplicates (upstream appends new hosts at the end).
 11. The export dialog suggests `linmtr-<host>.txt` or `.html` from the traced host; upstream
     suggests no name.
@@ -308,3 +318,6 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
     same range). Upstream checks no range. LinMTR sets no `IP_MTU_DISCOVER` option, so the
     kernel default applies and a probe larger than the path MTU can be fragmented. Upstream
     sets `IPFLAG_DONT_FRAGMENT` on every probe.
+15. An ICMP error from the target address makes its hop the target hop, and the probes stop
+    there. Upstream sets no address for an ICMP error. Thus, until the target replies,
+    upstream probes all 30 TTLs and shows the error on each hop from the target on.
