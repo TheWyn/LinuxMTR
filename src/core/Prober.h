@@ -131,7 +131,7 @@ bool decodeExtendedError(msghdr *msg, std::size_t controlCapacity, ErrQueueInfo 
 // msg->msg_controllen to it. Returns 0 when no complete stamp is present.
 qint64 decodeArrivalStamp(msghdr *msg, std::size_t controlCapacity);
 
-// Returns the RTT of a Reply event in ns. The kernel value is ev.rttUs, else the
+// Returns the RTT of an answer in ns. The kernel value is ev.rttUs, else the
 // stamp converted at the read: readNs - (wallNs - ev.arrivalNs). A kernel value in
 // (0, readNs] is the result; else the result is readNs. readNs is the monotonic
 // time from the send to the read. wallNs is CLOCK_REALTIME at the read. Read it

@@ -492,13 +492,21 @@ void TraceSession::Private::onProbeEvent(const ProbeEvent &ev)
         return;
     HopStats &hop = hopStats[static_cast<std::size_t>(ttl - 1)];
 
+    // The kernel values exclude the time that the answer waited for this thread.
+    // replyRttNs() needs the wall clock before the monotonic clock.
+    const qint64 wallNs = wallClockNs();
+    const qint64 readNs = std::max<qint64>(0, clock.nsecsElapsed() - it->sentAtNs);
+    const qint64 rttNs = replyRttNs(ev, readNs, wallNs);
+    // A result below readNs is a kernel value. A kernel value at or above the
+    // timeout shows an answer that arrived late. Ignore it: the sweep expires the
+    // probe, as for an answer after the sweep. The RTT at the read can include a
+    // wait for this thread, thus it never makes an answer late.
+    if (rttNs >= timeoutNs && rttNs < readNs)
+        return;
+
     switch (ev.kind) {
     case ProbeEvent::Kind::Reply: {
-        // The kernel values exclude the time that the answer waited for this thread.
-        // replyRttNs() needs the wall clock before the monotonic clock.
-        const qint64 wallNs = wallClockNs();
-        const qint64 readNs = std::max<qint64>(0, clock.nsecsElapsed() - it->sentAtNs);
-        const double rtt = static_cast<double>(replyRttNs(ev, readNs, wallNs)) / 1e6;
+        const double rtt = static_cast<double>(rttNs) / 1e6;
         ++hop.received;
         hop.lastMs = rtt;
         if (hop.received == 1) {

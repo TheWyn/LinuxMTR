@@ -103,6 +103,20 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   its length. The kernel turns its stamps on with a delay when the first socket of the host
   asks for them. An answer that arrives before that gets the read time as its stamp, thus
   about the RTT at the read.
+- Late answers: each pump tick reads the sockets before the sweep (§3.3). Thus an answer
+  that came in time counts, also when it then waited for this thread. A kernel value at or
+  above `timeoutSec` shows an answer that came late. The session ignores such an answer, and
+  the sweep expires the probe, as for an answer after the sweep. Thus an RTT from the kernel
+  is always less than the reply timeout. This applies to all kinds of answers. A late ICMP
+  error does not set `errorText`, and a late error from the target does not make its hop the
+  target hop. Upstream also ignores late answers (`IcmpSendEcho` returns no reply after its
+  timeout). An answer without a kernel value (a TCP reset) counts when the session reads it
+  before the sweep. The read can come up to one pump period (20 ms) after the timeout, or
+  later while the thread is busy. Its RTT at the read can include a wait for this thread.
+  Thus a check on that value could make an answer that came in time a loss. Two rare cases
+  make an answer that came in time late. Both need an answer that waits for this thread
+  until after the timeout. In the first, the kernel took the stamp at the read (see above).
+  In the second, the wall clock steps back during the wait.
 
 ### 3.3 Scheduling and bookkeeping
 
@@ -114,8 +128,9 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   `sentAtNs` is the monotonic send time for the RTT (§3.2) and the timeout; `sentAtMs` is the
   wall-clock send time for the `HopSample`. It holds at most 60000 entries, so that the seq
   space does not fill. At the cap, the session skips probes and emits one capacity
-  `infoMessage` per trace, as for the TCP cap. An entry older than
-  `timeoutSec` leaves the table and adds `timedOut++` to its hop.
+  `infoMessage` per trace, as for the TCP cap. At each pump tick, the sweep
+  (`sweepTimeouts()`) runs after the read of the sockets (§3.2). It removes each entry that
+  is `timeoutSec` or older and adds `timedOut++` to its hop.
 - Every resolved probe adds one `HopSample` to its hop: the round, the RTT or a negative
   value for no reply, and the wall-clock send time (`QDateTime::currentMSecsSinceEpoch()`).
   This includes ICMP errors, local errors, timeouts and failed sends.

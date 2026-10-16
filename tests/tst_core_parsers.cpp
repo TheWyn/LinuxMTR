@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Wyn
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTcpServer>
@@ -110,6 +111,9 @@ constexpr qint64 kReadNs = 300'000'000;
 // How long the live RTT test blocks the thread while an answer waits, in ms.
 constexpr int kStallMs = 300;
 
+// The reply timeout of the late-answer test, in ns: between two ticks of the 20 ms pump.
+constexpr qint64 kTimeoutNs = 110'000'000;
+
 sockaddr_in v4(const char *text)
 {
     sockaddr_in sin{};
@@ -143,35 +147,58 @@ void verifyUntouched(const ErrQueueInfo &info)
     QVERIFY(info.offender.isNull());
 }
 
-// Answers each probe at once with the event that answer() gives for its TTL.
-// The session reads the answers at its next pump tick.
+// Answers each probe with the event that answer() gives for its TTL. The session
+// reads an answer at the first pump tick at least holdNs after the send. An answer
+// that sets its TTL gets no seq. The session then matches it by TTL and socket, as
+// an answer that quotes only the UDP header.
 class FakeBackend : public linmtr::core::ProbeBackend
 {
 public:
-    explicit FakeBackend(std::function<ProbeEvent(int)> answer) : m_answer(std::move(answer)) {}
+    explicit FakeBackend(std::function<ProbeEvent(int)> answer, qint64 holdNs = 0)
+        : m_answer(std::move(answer)), m_holdNs(holdNs)
+    {
+        m_clock.start();
+    }
 
     int open() override { return 0; }
     int socketCount() const override { return 1; }
     int send(int ttl, quint16 seq, int slot) override
     {
         ProbeEvent ev = m_answer(ttl);
-        ev.hasSeq = true;
+        ev.hasSeq = ev.ttl == 0;
         ev.seq = seq;
         ev.slot = slot;
-        m_answers.push_back(ev);
+        m_answers.push_back({m_clock.nsecsElapsed() + m_holdNs, ev});
         return 0;
     }
     void drain(const EventSink &sink) override
     {
-        for (const ProbeEvent &ev : std::exchange(m_answers, {}))
+        // All answers have the same hold, so the ready ones come first.
+        const qint64 now = m_clock.nsecsElapsed();
+        std::vector<ProbeEvent> ready;
+        while (!m_answers.empty() && m_answers.front().first <= now) {
+            ready.push_back(m_answers.front().second);
+            m_answers.erase(m_answers.begin());
+        }
+        for (const ProbeEvent &ev : ready)
             sink(ev);
     }
     void attachNotifiers(QObject *, const std::function<void()> &) override {}
 
 private:
     std::function<ProbeEvent(int)> m_answer;
-    std::vector<ProbeEvent> m_answers;
+    qint64 m_holdNs = 0;
+    QElapsedTimer m_clock;
+    std::vector<std::pair<qint64, ProbeEvent>> m_answers;   // ready time, answer
 };
+
+// CLOCK_REALTIME, the clock of the kernel arrival stamps, in ns since the epoch.
+qint64 wallNowNs()
+{
+    timespec now{};
+    ::clock_gettime(CLOCK_REALTIME, &now);
+    return qint64(now.tv_sec) * 1'000'000'000 + now.tv_nsec;
+}
 
 // Returns an empty string when this process can send an ICMP echo request to
 // 127.0.0.1 through an unprivileged ping socket, else the reason it cannot.
@@ -266,6 +293,8 @@ private slots:
     void hopSampleOrderAndCap();
     void sessionIcmpError_data();
     void sessionIcmpError();
+    void sessionLateAnswer_data();
+    void sessionLateAnswer();
     void liveLoopbackTrace();
     void liveStalledReadRtt_data();
     void liveStalledReadRtt();
@@ -750,6 +779,96 @@ void TestCoreParsers::sessionIcmpError()
     QCOMPARE(session.hops().size(), 3);
     QCOMPARE(session.hops().at(2).address, target);
     QVERIFY(session.hops().at(2).isTarget);
+    session.stop();
+}
+
+void TestCoreParsers::sessionLateAnswer_data()
+{
+    // error: an ICMP error from a router, else a reply from the target. untagged:
+    // the answer has no seq, so the session matches it by TTL and socket. rttUs:
+    // its tcpi_rtt. stampMs: its arrival stamp, in ms after the send (0 = none).
+    // counted: the answer counts; else the probe times out.
+    QTest::addColumn<bool>("error");
+    QTest::addColumn<bool>("untagged");
+    QTest::addColumn<uint>("rttUs");
+    QTest::addColumn<int>("stampMs");
+    QTest::addColumn<bool>("counted");
+
+    QTest::newRow("reply: tcpi_rtt below the timeout") << false << false << 109'999u << 0 << true;
+    QTest::newRow("reply: tcpi_rtt at the timeout") << false << false << 110'000u << 0 << false;
+    QTest::newRow("reply: stamp before the timeout") << false << false << 0u << 100 << true;
+    QTest::newRow("reply: stamp after the timeout") << false << false << 0u << 110 << false;
+    QTest::newRow("reply: no kernel value") << false << false << 0u << 0 << true;
+    QTest::newRow("untagged reply: stamp after the timeout") << false << true << 0u << 110 << false;
+    QTest::newRow("error: stamp before the timeout") << true << false << 0u << 100 << true;
+    QTest::newRow("error: stamp after the timeout") << true << false << 0u << 110 << false;
+}
+
+// The reply timeout is 110 ms, and the fake backend holds the answer for 110 ms.
+// Thus the session reads it after the timeout, at the pump tick that also expires
+// the probe. Each tick reads the answers before it looks for expired probes. An
+// answer whose kernel value shows that it arrived after the timeout does not count,
+// also without a seq: the probe times out. An answer without a kernel value counts.
+void TestCoreParsers::sessionLateAnswer()
+{
+    QFETCH(bool, error);
+    QFETCH(bool, untagged);
+    QFETCH(uint, rttUs);
+    QFETCH(int, stampMs);
+    QFETCH(bool, counted);
+
+    const QHostAddress target(QStringLiteral("192.0.2.9"));
+    const QString unreachable = QStringLiteral("Destination host unreachable.");
+    const auto answer = [&](int ttl) {
+        ProbeEvent ev;
+        if (untagged)
+            ev.ttl = ttl;
+        if (error) {
+            ev.kind = ProbeEvent::Kind::Error;
+            ev.responder = QHostAddress(QStringLiteral("192.0.2.1"));
+            ev.errorText = unreachable;
+        } else {
+            ev.responder = target;
+            ev.reachedTarget = true;
+        }
+        ev.rttUs = rttUs;
+        if (stampMs > 0)
+            ev.arrivalNs = wallNowNs() + qint64(stampMs) * 1'000'000;
+        return ev;
+    };
+    linmtr::core::setBackendFactoryForTests(
+        [&answer] { return std::make_unique<FakeBackend>(answer, kTimeoutNs); });
+    const auto restore = qScopeGuard([] { linmtr::core::setBackendFactoryForTests({}); });
+
+    TraceOptions options;
+    options.maxHops = 1;
+    options.maxRounds = 1;
+    options.timeoutSec = kTimeoutNs / 1e9;
+    options.resolveNames = false;
+    TraceSession session;
+    session.start(target.toString(), options);
+    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() == 1, 5000);
+
+    const QList<HopStats> hops = session.hops();
+    QCOMPARE(hops.size(), 1);
+    const HopStats &hop = hops.constFirst();
+    const bool reply = counted && !error;
+    QCOMPARE(hop.sent, quint64(1));
+    QCOMPARE(hop.received, quint64(reply ? 1 : 0));
+    QCOMPARE(hop.timedOut, quint64(reply ? 0 : 1));
+    QCOMPARE(hop.history.size(), qsizetype(1));
+    QCOMPARE(hop.history.constFirst().ms >= 0.0f, reply);
+    QCOMPARE(hop.errorText, counted && error ? unreachable : QString());
+    QCOMPARE(hop.address, reply ? target : QHostAddress());
+    if (reply) {
+        const QByteArray rtt = QByteArray::number(hop.lastMs);
+        if (rttUs > 0)
+            QCOMPARE(hop.lastMs, rttUs / 1000.0);
+        else if (stampMs > 0)
+            QVERIFY2(hop.lastMs >= stampMs && hop.lastMs < kTimeoutNs / 1e6, rtt.constData());
+        else
+            QVERIFY2(hop.lastMs >= kTimeoutNs / 1e6, rtt.constData());   // the RTT at the read
+    }
     session.stop();
 }
 
