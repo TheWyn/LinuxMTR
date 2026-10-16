@@ -15,7 +15,7 @@ license=(GPL-2.0-only)
 depends=(qt6-base glibc libgcc libstdc++ hicolor-icon-theme)
 makedepends=(cmake)
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('890b7caca0da514affa9191d717c90101fbebe13feb0dcb2d5d468ed0bc53655')
+sha256sums=('bfe5ed8c20f1906422e27ca5e7ee5192c5d43343286606e04a6469782fde198f')
 
 build() {
   cmake -S "LinuxMTR-$pkgver" -B build \

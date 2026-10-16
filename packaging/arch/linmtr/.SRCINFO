@@ -12,6 +12,6 @@ pkgbase = linmtr
 	depends = libstdc++
 	depends = hicolor-icon-theme
 	source = linmtr-0.1.0.tar.gz::https://github.com/TheWyn/LinuxMTR/archive/refs/tags/v0.1.0.tar.gz
-	sha256sums = 890b7caca0da514affa9191d717c90101fbebe13feb0dcb2d5d468ed0bc53655
+	sha256sums = bfe5ed8c20f1906422e27ca5e7ee5192c5d43343286606e04a6469782fde198f
 
 pkgname = linmtr
