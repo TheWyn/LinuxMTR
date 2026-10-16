@@ -16,8 +16,9 @@ namespace linmtr::core {
 // arrived on identify the pending probe. The session spreads rounds over
 // socketCount sockets, each with its own ephemeral source port. It never puts a
 // second probe of the same TTL in flight on one socket (matchesByPort()), so
-// this match is exact. When the quote includes the payload tag, handleError()
-// uses the exact sequence number.
+// this match is exact for an answer within the reply timeout (DESIGN.md §3.1).
+// When the quote includes the payload tag, handleError() uses the exact
+// sequence number.
 class UdpProber final : public Prober
 {
 public:

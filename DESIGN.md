@@ -65,9 +65,26 @@ input: the engine checks the bounds of every access and ignores malformed packet
   reached, also from another address of the target (anycast, multi-homed hosts).
 - UDP socket pool: round n uses socket `(n - 1) % N`, `N = ceil(timeout / interval) + 2`, at
   most 128 (the widest GUI and CLI setting, 10 s / 0.1 s, needs 102). Invariant: at most one
-  pending probe per TTL per socket, so a port-only match is exact. When a socket still has
-  a probe of the TTL in flight, the session skips the probe (no `sent++`) and emits one
-  `infoMessage` per trace.
+  pending probe per TTL per socket. When a socket still has a probe of the TTL in flight, the
+  session skips the probe (no `sent++`) and emits one `infoMessage` per trace. With the GUI
+  and CLI settings, a socket sends the next probe of a TTL more than `timeout` after the
+  earlier one. Thus the session skips no probe.
+- Port-only match: an answer without the payload tag goes to the pending probe of its TTL on
+  its socket. IPv4 routers that quote only the UDP header (28 bytes with the IP header, as
+  RFC 792 asks) send such answers. A UDP service on the target also sends them. An ICMPv6
+  error has up to 1280 bytes (RFC 4443), so it normally has the tag. A Linux ICMP error has
+  up to 576 bytes. Thus a Linux router, and this host after a failed ARP resolution, quote
+  the payload, and the tag gives an exact match. The match by port is exact for an answer
+  that arrives within the reply timeout. Limitation: a socket sends the next probe of a TTL
+  about N intervals after the earlier one. An answer without the tag that arrives later goes
+  to the newer probe, if that probe still waits. A time exceeded or a port unreachable then
+  counts as the reply of the newer probe, with a wrong RTT. The row can thus show too little
+  loss. An ICMP error makes the newer probe lost, with that error text. The answer of the
+  newer probe then finds no probe, and the session ignores it. Thus a wrong match needs an
+  answer without the tag that arrives about N intervals late. LinMTR accepts this limitation.
+  The error queue gives the UDP payload without the UDP header, so the quoted UDP checksum
+  (different for each probe) is not available. The arrival stamp cannot tell a late answer
+  from an answer to the newer probe, and a larger pool only makes the necessary delay longer.
 
 ### 3.2 Receive path and answers
 
@@ -82,7 +99,8 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   (`SetName()` only). A router can send the error for each TTL up to `maxHops`. Then each of
   these rows shows the error text, as upstream. With the address of the router on these rows,
   the trimming (§3.3) stops the probes at that router until the trace ends. Exception: an
-  error from the target address makes the hop the target hop (§8 item 15).
+  error from the target address makes the hop the target hop (§8 item 15). Each reply (echo
+  reply, time exceeded, target reached) clears `errorText` (§8 item 17).
 - A failed `sendto()` counts the probe as sent and timed out, with one `infoMessage` per
   errno. A round in which a send succeeded arms this notice again. When no send of the first
   round succeeds, the session emits `errorOccurred`.
@@ -121,9 +139,24 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
 ### 3.3 Scheduling and bookkeeping
 
 - A 20 ms pump `QTimer` runs while tracing. A round starts every `intervalSec` (monotonic
-  deadline); TTL k goes at `roundStart + (k - 1) * stagger`, with
-  `stagger = min(20 ms, intervalSec * 1000 / (2 * maxTtl))`, so that no burst trips the ICMP
-  rate limits of routers. After a stall, the next round starts one interval later.
+  deadline). TTL k is due at `roundStart + (k - 1) * stagger`, with
+  `stagger = min(20 ms, intervalSec * 1000 / (2 * maxTtl))` and `maxTtl` of the trimming
+  (below) at the start of the round. Each pump tick sends all probes that are due. Thus with
+  a stagger below 20 ms, the probes go in groups of about `20 ms / stagger`
+  (`40 ms * maxTtl / intervalSec`). At `-i 0.1` with 30 hops, a round goes as 1, 12, 12 and
+  5 probes (64 hops: 1, 25, 26 and 12). At `-i 1` with 30 hops, one or two probes go per
+  tick (64 hops: two or three).
+- The groups do not change the number of probes that a router gets in a round: each probe
+  of a round expires at another router. Only a host that answers for more than one TTL gets
+  more than one probe of a round. These hosts are the target before the trimming stops at
+  it, and a router that sends an ICMP error for each TTL after it. Their rate limits count
+  per second (Linux, IPv4: 6 at once, then 1 per second for each destination; IPv6 allows
+  more). The spread is shorter than half an interval, so it has almost no effect on these
+  limits. The stagger lets the trimming stop a round soon after the target first answers. It
+  also keeps the groups small, as mtr spreads its probes over the interval.
+- After a stall, the session sends the rest of the earlier round at once and starts the due
+  round. The next round starts one interval later: the session does not send the rounds that
+  it missed.
 - Pending table: `seq (16-bit rolling counter) -> { ttl, round, slot, sentAtNs, sentAtMs }`.
   `sentAtNs` is the monotonic send time for the RTT (§3.2) and the timeout; `sentAtMs` is the
   wall-clock send time for the `HopSample`. It holds at most 60000 entries, so that the seq
@@ -139,8 +172,8 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
 - `roundCompleted(n)` fires when every probe of round n has an answer or timed out. With
   `maxRounds > 0`, no round starts after that many; draining continues until the last round
   resolves (report mode sends exactly `--cycles` rounds).
-- A hop keeps the address of its latest reply or of an ICMP error from the target (§3.2). It
-  resolves the name again when the address changes.
+- A hop keeps the address of its latest reply or of an ICMP error from the target (§3.2,
+  §8 item 16). It resolves the name again when the address changes.
 - Trimming (upstream `GetMax()`): `maxTtl` is the lowest TTL whose hop is the target (target
   address or `isTarget`), and probing stops beyond it. Else, trailing hops go while the last
   two have the same address. `hops()` returns only the rows `1..maxTtl` with `sent > 0`.
@@ -336,3 +369,15 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
 15. An ICMP error from the target address makes its hop the target hop, and the probes stop
     there. Upstream sets no address for an ICMP error. Thus, until the target replies,
     upstream probes all 30 TTLs and shows the error on each hop from the target on.
+16. A hop shows the address of its latest reply (or of an ICMP error from the target, item
+    15). A reply from a new address (for example on a load-balanced path) replaces the
+    address, and the hop resolves the new name (§3.3). The trimming (§3.3) uses these
+    addresses. Upstream `SetAddr()` keeps the first address of a hop until the trace ends
+    and resolves its name once. In both, the statistics of a hop include the replies from
+    all its addresses.
+17. A reply clears the error text of its hop (§3.2). Thus a row shows an ICMP error only
+    until the next reply. Upstream writes the error text into the name of the hop
+    (`SetName()`), and a reply does not change the name. Only the reverse lookup writes the
+    name again, and upstream starts it once, at the first address of the hop. Thus an error
+    that comes after that lookup ends stays until the trace ends. With name resolution off,
+    every error stays.

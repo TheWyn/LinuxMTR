@@ -169,9 +169,10 @@ public:
 
     // True when an answer can arrive without the seq of the probe. The session
     // then matches it by TTL and socket only (UDP: routers that quote only the
-    // UDP header). Such a match is exact only while each socket has at most one
-    // probe per TTL in flight. Thus the session never sends a probe on a socket
-    // that still has one pending for the same TTL.
+    // UDP header). Such a match is exact only for an answer within the reply
+    // timeout. It also needs at most one probe per TTL in flight on each socket.
+    // Thus the session never sends a probe on a socket that still has one
+    // pending for the same TTL.
     virtual bool matchesByPort() const { return false; }
 
     // The reply timeout of the probe expired and the session stopped waiting.

@@ -39,8 +39,8 @@ namespace {
 
 constexpr int kPumpIntervalMs = 20;            // pump timer period
 constexpr int kCoalesceMs = 100;               // shortest time between two hopsChanged()
-// Largest send delay between two TTLs of a round, in nanoseconds (20 ms). The
-// spread keeps bursts below the ICMP rate limits of routers.
+// Largest send delay between two TTLs of a round, in nanoseconds (20 ms). Each
+// pump tick sends all due probes, so a shorter delay sends groups (DESIGN.md §3.3).
 constexpr qint64 kMaxStaggerNs = 20'000'000;
 constexpr qsizetype kMaxPending = 60000;       // keeps the 16-bit seq space from filling
 // Largest UDP socket pool. Wider engine-only settings stay exact: sendProbe()
@@ -369,7 +369,8 @@ void TraceSession::Private::beginTracing()
         // One socket per round slot: a TTL uses a socket again only after its
         // earlier probe there timed out. The pool adds one interval of slack for
         // timer jitter. Each socket has its own source port, so an ICMP error that
-        // quotes only the UDP header still identifies the round.
+        // quotes only the UDP header still identifies the round, if it arrives
+        // within the reply timeout (DESIGN.md §3.1).
         const int slotCount = static_cast<int>(std::ceil(options.timeoutSec / options.intervalSec)) + 2;
         p = std::make_unique<UdpProber>(targetAddress, options.pingSizeBytes,
                                         std::clamp(slotCount, 1, kMaxUdpSockets));

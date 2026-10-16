@@ -21,7 +21,8 @@ struct HopStats
                                  // target (other ICMP errors keep it); isNull() until the
                                  // first such answer
     QString hostname;            // reverse-DNS result; empty until resolved
-    QString errorText;           // WinMTR ICMP error string; displayHost() shows it first
+    QString errorText;           // WinMTR text of the latest ICMP error; the next reply
+                                 // clears it. displayHost() shows it first
     quint64 sent = 0;            // probes sent, including those still in flight
     quint64 received = 0;
     quint64 timedOut = 0;        // probes that exceeded the reply timeout

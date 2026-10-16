@@ -74,13 +74,14 @@ You can also select UDP with `--udp` or with **Options → Probing → Protocol*
 
 In UDP mode, an ordinary UDP socket with `IP_RECVERR` sends datagrams to port
 `33434 + (TTL - 1)`. The kernel queues the ICMP replies from routers on the error queue
-of the socket. A router quotes only a short part of the original datagram. Thus LinMTR
+of the socket. A router can quote only a short part of the original datagram. Thus LinMTR
 matches each reply by the original destination port and by the socket it arrived on.
 
 Each round uses the next socket of a pool. The pool size makes sure that a hop uses a
-socket again only after the earlier probe there timed out. Thus a reply always belongs
-to exactly one probe, and its round-trip time is correct. The pool has at most 128
-sockets, which covers all settings of the GUI and the command line.
+socket again only after the earlier probe there timed out. Thus a reply that arrives
+within the reply timeout belongs to exactly one probe, and its round-trip time is
+correct. The pool has at most 128 sockets, which covers all settings of the GUI and the
+command line.
 
 When the target replies "port unreachable", the trace has reached it. A firewall that
 drops these datagrams, or the ICMP replies, can prevent detection of the target. In that
@@ -299,6 +300,8 @@ order and report layout. Its internals are new and designed for Linux.
 | Fallback | UDP probes with the `IP_RECVERR` error queue (tracepath method), automatic or user-selected | None |
 | Protocols | ICMP, UDP and TCP (`connect()` probes, port 80 by default) | ICMP only |
 | Host display | Name, IP address, or both (`name (IP)`, on by default) | Name or IP address |
+| Hop address | The address of the latest reply. When a reply comes from a new address (for example on a load-balanced path), the row shows that address and its name | The address of the first reply, until the trace ends |
+| ICMP error on a hop | The row shows the error text until the next reply of the hop | The error text stays until the trace ends. Only the one reverse lookup of the hop (at its first reply, with **Resolve names** on) can replace it |
 | Copy one hop | Ctrl+C in the table, right-click menu | None |
 | IPv6 | Supported. **IP version** `Auto` takes the address that the resolver lists first: a dual-stack name traces over IPv6 when this computer has IPv6 connectivity, as with mtr | IPv4 only |
 | Threading | One GUI thread, non-blocking sockets in the Qt event loop | One blocking thread per TTL |

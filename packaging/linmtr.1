@@ -228,11 +228,11 @@ Show the summary, including the generic Qt options, and exit.
 Each hop is one row, with these columns:
 .TP
 .B Hostname
-The host name of the router that replied (when name resolution is on),
-else its IP address.
-If the router sent an ICMP error (for example
-.RB \(lq "Destination host unreachable." \(rq),
-the row shows the error text instead.
+The host name of the router that sent the latest reply (when name resolution
+is on), else its IP address.
+The text of an ICMP error (for example
+.RB \(lq "Destination host unreachable." \(rq)
+shows instead, until the next reply of the hop.
 A hop that never replied shows
 .RB \(lq "No response from host" \(rq.
 With
