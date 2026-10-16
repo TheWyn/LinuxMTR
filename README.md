@@ -24,7 +24,7 @@ Binary `linmtr` · licence GPL-2.0-only
 - Copy one hop: **Ctrl+C** in the hop table, or the right-click menu (**Copy hostname**,
   **Copy IP address**).
 - **Host properties** dialog: double-click a hop. It updates while the trace runs and
-  shows a graph of the round-trip times of the hop.
+  shows the jitter, the loss with one decimal and a graph of the round-trip times of the hop.
 - Optional route graph of all hops under the table.
 - ICMP echo probes through unprivileged ping sockets, with automatic fallback to UDP probes.
   UDP and TCP probes are also available on request.
@@ -215,6 +215,14 @@ its host, the time when the probe was sent and the round-trip time, or **Lost** 
 probe. A circle marks that probe. In the route graph, the legend gives the hop
 number of each colour, and the hop that you select in the table has a wider line.
 
+In the Host properties dialog, **Jitter** is the mean change of the round-trip time from
+one reply to the next. Lost probes do not count: the reply after a lost probe pairs with
+the reply before it.
+
+**Loss (%)** in the dialog has one decimal and rounds up, as the table does. Thus the table
+shows the same value rounded up to an integer: 0.1 in the dialog is 1 in the table. The
+dialog shows 100.0 only when no reply came.
+
 ### Command line
 
 `linmtr [options] [HOST]`. `linmtr --help` lists the options with their defaults, and
@@ -311,7 +319,7 @@ order and report layout. Its internals are new and designed for Linux.
 | Defaults | Interval 1.0 s, ping size 64, LRU 128, DNS on, max hops 30 | Same |
 | New options | **Max hops**, **Protocol**, **TCP port**, **IP version**, **Reply timeout**, **Show IP next to hostname**, **Show route graph** | None |
 | About | An about label in **Options** | **License and Credits** dialog |
-| Host properties | Non-modal; it updates while the trace runs, and it shows real statistics. For a hop without an address, the comment is the ICMP error text or `No response from host`. For a hop with an address, **Name** shows its host name or address, and the comment is the ICMP error text or `Host alive.` | A modal snapshot. For a hop without an address, the statistics are zeros, and the comment is the ICMP error text or empty. For a hop with an address, **Name** shows the ICMP error text instead of the host name, and the comment is `Host alive.` |
+| Host properties | Non-modal; it updates while the trace runs, and it shows real statistics. For a hop without an address, the comment is the ICMP error text or `No response from host`. For a hop with an address, **Name** shows its host name or address, and the comment is the ICMP error text or `Host alive.` It also shows **Jitter**, and **Loss (%)** with one decimal. | A modal snapshot. For a hop without an address, the statistics are zeros, and the comment is the ICMP error text or empty. For a hop with an address, **Name** shows the ICMP error text instead of the host name, and the comment is `Host alive.` No jitter; the loss is an integer. |
 | Graphs | Per-hop graph in Host properties; optional route graph under the table | None |
 | Host history | Newest first; a host that you trace again moves to the top. A host goes in only after its name resolved, as in WinMTR. | New hosts at the end, no reordering |
 | Reports | Same layout; title `LinMTR statistics` (same length as `WinMTR statistics`, so columns align); `\n` line endings | `\r\n` line endings |

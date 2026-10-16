@@ -34,5 +34,6 @@ private:
     QLineEdit *m_best = nullptr;
     QLineEdit *m_average = nullptr;
     QLineEdit *m_worst = nullptr;
+    QLineEdit *m_jitter = nullptr;
     HopGraphWidget *m_graph = nullptr;
 };

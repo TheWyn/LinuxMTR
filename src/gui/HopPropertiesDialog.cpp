@@ -43,6 +43,21 @@ QString pingText(double ms)
     return QString::number(ms > 0.0 ? ms : 0.0, 'f', 1);
 }
 
+// Returns the loss of the hop in percent, with one decimal. It applies the
+// formula of HopStats::lossPercent() to tenths of a percent, so it rounds up.
+// Thus the table shows this value rounded up to an integer. A hop with a reply
+// shows at most 99.9 (the table shows 100 for 1 reply of 2001 probes).
+QString lossText(const HopStats &hop)
+{
+    const quint64 done = hop.received + hop.timedOut;
+    if (done == 0)
+        return QStringLiteral("0.0");
+    quint64 tenths = 1000 - (1000 * hop.received) / done;
+    if (hop.received > 0)
+        tenths = std::min<quint64>(tenths, 999);
+    return QString::number(tenths / 10.0, 'f', 1);
+}
+
 } // namespace
 
 HopPropertiesDialog::HopPropertiesDialog(HopTableModel *model, int row, QWidget *parent)
@@ -79,10 +94,12 @@ HopPropertiesDialog::HopPropertiesDialog(HopTableModel *model, int row, QWidget 
     m_best = readOnlyField(pingBox);
     m_average = readOnlyField(pingBox);
     m_worst = readOnlyField(pingBox);
+    m_jitter = readOnlyField(pingBox);
     pingForm->addRow(tr("Last:"), m_last);
     pingForm->addRow(tr("Best:"), m_best);
     pingForm->addRow(tr("Average:"), m_average);
     pingForm->addRow(tr("Worst:"), m_worst);
+    pingForm->addRow(tr("Jitter:"), m_jitter);
 
     auto *statsRow = new QHBoxLayout;
     statsRow->addWidget(packetsBox);
@@ -140,11 +157,12 @@ void HopPropertiesDialog::refresh()
     setField(m_comment, comment);
     setField(m_sent, QString::number(hop.sent));
     setField(m_received, QString::number(hop.received));
-    setField(m_loss, QString::number(hop.lossPercent()));
+    setField(m_loss, lossText(hop));
     setField(m_last, pingText(hop.lastMs));
     setField(m_best, pingText(hop.bestMs));
     setField(m_average, pingText(hop.averageMs()));
     setField(m_worst, pingText(hop.worstMs));
+    setField(m_jitter, pingText(hop.jitterMs()));
     m_graph->setSeries({{QString::number(hop.ttl), HopGraphWidget::seriesColor(hop.ttl - 1),
                          hop.history,
                          hop.displayHost(m_model->resolveNames(), m_model->showIps())}});

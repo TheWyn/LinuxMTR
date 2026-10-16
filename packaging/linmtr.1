@@ -331,6 +331,16 @@ Double\-click a row to open the
 dialog for that hop.
 The dialog shows a graph of the round\-trip times of the hop and updates
 while the trace runs.
+The
+.B Ping time
+group of the dialog also shows the jitter: the mean change of the
+round\-trip time from one reply to the next.
+Lost probes do not count: the reply after a lost probe pairs with the reply
+before it.
+.B Loss (%)
+has one decimal and rounds up, as the table does, so the table shows this value
+rounded up to an integer.
+The dialog shows 100.0 only when no reply came.
 In the graph, a gap in the line is a round without a reply, and a short tick
 below the zero line is a lost probe.
 The graph shows one round for each 3 pixels of its width;

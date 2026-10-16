@@ -30,6 +30,7 @@ struct HopStats
     double bestMs = 0.0;
     double worstMs = 0.0;
     double totalMs = 0.0;        // sum of reply RTTs, for the average
+    double jitterTotalMs = 0.0;  // sum of |RTT - RTT of the previous reply|, for jitterMs()
     bool isTarget = false;       // the trace reached the target at this hop
 
     // The newest kHistoryRounds probe results in ascending round order. A round
@@ -61,6 +62,15 @@ struct HopStats
     double averageMs() const
     {
         return received == 0 ? 0.0 : totalMs / static_cast<double>(received);
+    }
+
+    // Jitter: the mean of |RTT - RTT of the previous reply| over all replies
+    // after the first. The previous reply is the reply that the session read
+    // before it, as for lastMs. Lost probes and ICMP errors have no RTT and do
+    // not count. 0 with fewer than two replies.
+    double jitterMs() const
+    {
+        return received < 2 ? 0.0 : jitterTotalMs / static_cast<double>(received - 1);
     }
 
     // Display rule for the table, the reports and the properties dialog. Order:

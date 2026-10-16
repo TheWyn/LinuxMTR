@@ -5,6 +5,8 @@
 #include <QLineEdit>
 #include <QtTest>
 
+#include <cmath>
+
 #include "gui/HopPropertiesDialog.h"
 #include "gui/HopTableModel.h"
 
@@ -28,6 +30,9 @@ class TestHopPropertiesDialog : public QObject
 
 private slots:
     void followsHopByTtl();
+    void lossOneDecimal_data();
+    void lossOneDecimal();
+    void jitterField();
 };
 
 void TestHopPropertiesDialog::followsHopByTtl()
@@ -37,9 +42,9 @@ void TestHopPropertiesDialog::followsHopByTtl()
     HopPropertiesDialog dialog(&model, 1);
 
     // Creation order: Name, IP Address, comment, Sent, Received, Loss, Last,
-    // Best, Average, Worst.
+    // Best, Average, Worst, Jitter.
     const QList<QLineEdit *> fields = dialog.findChildren<QLineEdit *>();
-    QCOMPARE(fields.size(), 10);
+    QCOMPARE(fields.size(), 11);
     QLineEdit *ip = fields.at(1);
     QLineEdit *sent = fields.at(3);
     QCOMPARE(ip->text(), QStringLiteral("10.0.0.2"));
@@ -57,6 +62,67 @@ void TestHopPropertiesDialog::followsHopByTtl()
     // A row with the same TTL comes back (rowsInserted only).
     model.setHops({makeHop(1, 7), makeHop(2, 1)});
     QCOMPARE(sent->text(), QStringLiteral("1"));
+}
+
+void TestHopPropertiesDialog::lossOneDecimal_data()
+{
+    QTest::addColumn<int>("received");
+    QTest::addColumn<int>("timedOut");
+    QTest::addColumn<QString>("loss");   // the dialog text
+    QTest::addColumn<int>("table");      // HopStats::lossPercent()
+
+    QTest::newRow("no probe resolved") << 0 << 0 << QStringLiteral("0.0") << 0;
+    QTest::newRow("no loss") << 10 << 0 << QStringLiteral("0.0") << 0;
+    QTest::newRow("1 lost of 1000") << 999 << 1 << QStringLiteral("0.1") << 1;
+    QTest::newRow("1 lost of 3000: up, not nearest") << 2999 << 1 << QStringLiteral("0.1") << 1;
+    QTest::newRow("1 lost of 3: up, not down") << 2 << 1 << QStringLiteral("33.4") << 34;
+    QTest::newRow("exact") << 3 << 1 << QStringLiteral("25.0") << 25;
+    QTest::newRow("1 reply of 2001: not 100.0") << 1 << 2000 << QStringLiteral("99.9") << 100;
+    QTest::newRow("no reply") << 0 << 5 << QStringLiteral("100.0") << 100;
+}
+
+// The dialog shows the loss with one decimal, rounded up. The table value is the
+// dialog value rounded up to an integer. A probe in flight does not count.
+void TestHopPropertiesDialog::lossOneDecimal()
+{
+    QFETCH(int, received);
+    QFETCH(int, timedOut);
+    QFETCH(QString, loss);
+    QFETCH(int, table);
+
+    HopStats hop = makeHop(1, quint64(received + timedOut + 1));
+    hop.received = quint64(received);
+    hop.timedOut = quint64(timedOut);
+    QCOMPARE(hop.lossPercent(), table);
+
+    HopTableModel model;
+    model.setHops({hop});
+    HopPropertiesDialog dialog(&model, 0);
+    QCOMPARE(dialog.findChildren<QLineEdit *>().at(5)->text(), loss);
+    QCOMPARE(int(std::ceil(loss.toDouble())), table);
+}
+
+// The Ping time group shows HopStats::jitterMs() with one decimal, as the other times.
+void TestHopPropertiesDialog::jitterField()
+{
+    HopStats hop = makeHop(1, 4);
+    hop.jitterTotalMs = 10.0;   // three differences
+    HopTableModel model;
+    model.setHops({hop});
+    HopPropertiesDialog dialog(&model, 0);
+    QLineEdit *jitter = dialog.findChildren<QLineEdit *>().at(10);
+    QCOMPARE(jitter->text(), QStringLiteral("3.3"));
+
+    hop.received = 2;   // one difference
+    hop.jitterTotalMs = 5.0;
+    model.setHops({hop});
+    QCOMPARE(jitter->text(), QStringLiteral("5.0"));
+
+    hop.received = 1;   // no difference
+    hop.jitterTotalMs = 0.0;
+    QCOMPARE(hop.jitterMs(), 0.0);
+    model.setHops({hop});
+    QCOMPARE(jitter->text(), QStringLiteral("0.0"));
 }
 
 int main(int argc, char *argv[])

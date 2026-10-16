@@ -508,6 +508,8 @@ void TraceSession::Private::onProbeEvent(const ProbeEvent &ev)
     switch (ev.kind) {
     case ProbeEvent::Kind::Reply: {
         const double rtt = static_cast<double>(rttNs) / 1e6;
+        if (hop.received > 0)
+            hop.jitterTotalMs += std::abs(rtt - hop.lastMs);
         ++hop.received;
         hop.lastMs = rtt;
         if (hop.received == 1) {

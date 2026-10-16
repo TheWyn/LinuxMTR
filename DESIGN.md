@@ -21,7 +21,8 @@ contains no Windows code. The literal UI and report strings are copies on purpos
 | Threading | None. One GUI thread, non-blocking sockets and the Qt event loop. |
 | RTT | From the kernel, so that a busy GUI thread does not make it larger: the arrival stamp (`SO_TIMESTAMPNS`), or `tcpi_rtt` for a TCP handshake; else the RTT at the read (§3.2, §3.4). Upstream reads `RoundTripTime` from `IcmpSendEcho`. |
 | Probe scheduling | Rounds, as in mtr: one probe per TTL per round, one round every `interval` seconds. Upstream uses one blocking thread per TTL. |
-| Loss % | The upstream integer formula `100 - 100*recv/sent`, over resolved probes only (replied and timed out). A probe in flight does not count as lost. |
+| Loss % | The upstream integer formula `100 - 100*recv/sent`, over resolved probes only (replied and timed out). A probe in flight does not count as lost. Host properties shows the loss with one decimal, rounded up (§4). |
+| Jitter | Only in Host properties: the mean change of the RTT from one reply to the next, over the whole trace (§3.3). The table and the reports have no jitter, as upstream. |
 | Reply timeout | 3.0 s by default, configurable (upstream: fixed 5 s). |
 | Defaults | Interval 1.0 s, ping size 64, LRU 128, DNS on, max hops 30 (all upstream). |
 | Reports | The upstream layout byte for byte, with `WinMTR statistics` changed to `LinMTR statistics` (same length, so the alignment stays). `\n` line endings (upstream `\r\n`). Report mode adds a JSON report with a LinMTR schema (§5). |
@@ -39,9 +40,9 @@ Signals: `stateChanged`, `hopsChanged` (coalesced, §3.3), `roundCompleted(int)`
 Read access: `state()` (`Idle`, `Resolving`, `Tracing`), `target()`, `targetAddress()` (valid
 after resolution), `options()` (the sanitized options; the protocol after a UDP fallback),
 `roundsCompleted()` and `lastError()`. `HopStats` adds `lossPercent()`, `averageMs()`,
-`displayHost(resolveNames, showIps)` and `addSample()`. `TraceOptions` has `intervalSec`,
-`pingSizeBytes`, `timeoutSec`, `maxHops`, `resolveNames`, `protocol`, `ipVersion`, `tcpPort`
-and `maxRounds` (0 = unlimited).
+`jitterMs()` (§3.3), `displayHost(resolveNames, showIps)` and `addSample()`. `TraceOptions`
+has `intervalSec`, `pingSizeBytes`, `timeoutSec`, `maxHops`, `resolveNames`, `protocol`,
+`ipVersion`, `tcpPort` and `maxRounds` (0 = unlimited).
 `HopStats::history` holds the newest `kHistoryRounds` (3600) probe results of the hop in
 ascending round order, for the graphs (§4). The reports do not use it. Each `HopSample` has
 the round number, the RTT in ms (a negative RTT means no reply) and the send time of the
@@ -169,6 +170,18 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   This includes ICMP errors, local errors, timeouts and failed sends.
   `HopStats::addSample()` keeps the newest `kHistoryRounds` samples in round order, also when
   a timeout resolves after a reply of a later round.
+- Jitter: each reply after the first adds |RTT - `lastMs`| to `jitterTotalMs` before `lastMs`
+  takes the new RTT (§3.2). `jitterMs()` = `jitterTotalMs / (received - 1)`; it is 0 with
+  fewer than two replies. Thus the pairs follow the order in which the session reads the
+  replies, as `lastMs` does, also for a reply out of round order. A lost probe, an ICMP error
+  or a failed send has no RTT, so the reply after it pairs with the reply before it. Replies
+  from different routers at one TTL make one sequence, as for the other times.
+- mtr pairs the replies in the same way (`ui/net.c:269-274` in mtr 0.96). Its `Javg` counts
+  the first reply as a jitter of 0 (`ui/net.c:276-281`). Thus its running mean divides the
+  sum by the number of replies, not by the number of differences (`ui/net.c:300-302`). Its
+  value is about `(received - 1) / received` times the LinMTR value: for two replies of 10
+  and 30 ms, 10 ms against 20 ms. `Javg` is also an integer number of microseconds, and it
+  counts an ICMP unreachable answer as a reply.
 - `roundCompleted(n)` fires when every probe of round n has an answer or timed out. With
   `maxRounds > 0`, no round starts after that many; draining continues until the last round
   resolves (report mode sends exactly `--cycles` rounds).
@@ -232,6 +245,13 @@ Labels, mnemonics and button texts are verbatim upstream (`WinMTR.rc`).
   more than one can be open. The dialog follows its hop by TTL through the `HopTableModel`
   signals, also after Stop and Start. When no row has that TTL, it keeps the last values.
   Below the statistics, a `HopGraphWidget` shows the hop history. §8 lists the deviations.
+- Host properties values: the times use `%.1f` ms, and `Jitter:` under `Worst:` shows
+  `jitterMs()` (§3.3). `Loss (%):` shows the loss with one decimal. The dialog calculates
+  tenths of a percent in integers, `1000 - 1000*recv/done`, with done = received + timed out.
+  This is the table formula with one more digit, so it also rounds up. Thus the table shows
+  the dialog value rounded up to an integer. With a reply, the value is at most 99.9 (the
+  table shows 100 for 1 reply of 2001 probes). Thus 0.0 means that no probe was lost, and
+  100.0 means that no reply came.
 - Route graph: a `HopGraphWidget` with a legend under the table, in a vertical `QSplitter`.
   It has one line per table row, with the colour `seriesColor(ttl - 1)` from a palette
   of 10 colours. The line of the current row is wider and on top. `Show route graph`
@@ -359,7 +379,9 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
 11. The export dialog suggests `linmtr-<host>.txt` or `.html` from the traced host; upstream
     suggests no name.
 12. Host properties is non-modal, updates while the trace runs and shows a graph of the hop
-    round-trip times. Upstream shows a static modal snapshot.
+    round-trip times. Upstream shows a static modal snapshot. The dialog also shows `Jitter:`,
+    the loss with one decimal and the times with real tenths. Upstream has no jitter, and it
+    shows the integer loss and times of the table (`%.1f` of an integer).
 13. The route graph under the table and the `Show route graph` option are new; upstream has
     no graph.
 14. Ping size: 0 to 8192 bytes (`OptionsDialog.h`; the CLI check and the engine clamp use the

@@ -9,6 +9,7 @@
 #include <QtTest>
 
 #include <cerrno>
+#include <cmath>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
@@ -295,6 +296,7 @@ private slots:
     void sessionIcmpError();
     void sessionLateAnswer_data();
     void sessionLateAnswer();
+    void sessionJitter();
     void liveLoopbackTrace();
     void liveStalledReadRtt_data();
     void liveStalledReadRtt();
@@ -869,6 +871,65 @@ void TestCoreParsers::sessionLateAnswer()
         else
             QVERIFY2(hop.lastMs >= kTimeoutNs / 1e6, rtt.constData());   // the RTT at the read
     }
+    session.stop();
+}
+
+// The target answers TTL 1 with the RTTs 1, 4, 3 and 7 ms, as the kernel value of
+// a TCP handshake. A lost probe and an ICMP error come between them. The jitter is
+// the mean of the differences between consecutive replies: (3 + 1 + 4) / 3.
+// replyRttNs() takes the RTT at the read when the session reads an answer sooner
+// than its RTT after the send. An example is the answer to a probe that a late pump
+// tick sent. Thus the test takes the expected RTTs from the history.
+void TestCoreParsers::sessionJitter()
+{
+    const QHostAddress target(QStringLiteral("192.0.2.9"));
+    const std::vector<int> pattern = {1000, 0, 4000, -1, 3000, 7000};   // 0 lost, -1 error
+    std::size_t calls = 0;
+    const auto answer = [&](int) {
+        ProbeEvent ev;
+        ev.responder = target;
+        ev.reachedTarget = true;
+        const int us = pattern[calls++ % pattern.size()];
+        if (us == 0) {
+            ev.kind = ProbeEvent::Kind::Lost;
+        } else if (us < 0) {
+            ev.kind = ProbeEvent::Kind::Error;
+            ev.responder = QHostAddress(QStringLiteral("192.0.2.1"));
+            ev.errorText = QStringLiteral("Destination host unreachable.");
+        } else {
+            ev.rttUs = quint32(us);
+        }
+        return ev;
+    };
+    linmtr::core::setBackendFactoryForTests([&answer] { return std::make_unique<FakeBackend>(answer); });
+    const auto restore = qScopeGuard([] { linmtr::core::setBackendFactoryForTests({}); });
+
+    TraceOptions options;
+    options.intervalSec = 0.1;
+    options.maxHops = 1;
+    options.maxRounds = int(pattern.size());
+    options.resolveNames = false;
+    TraceSession session;
+    QSignalSpy errors(&session, &TraceSession::errorOccurred);
+    session.start(target.toString(), options);
+    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= options.maxRounds || !errors.isEmpty(), 10000);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    const HopStats hop = session.hops().value(0);
+    QCOMPARE(hop.received, quint64(4));
+    QCOMPARE(hop.timedOut, quint64(2));
+    double sum = 0.0;
+    double previous = -1.0;
+    for (const HopSample &s : hop.history) {
+        if (s.ms < 0.0f)
+            continue;
+        if (previous >= 0.0)
+            sum += std::abs(s.ms - previous);
+        previous = s.ms;
+    }
+    QVERIFY(sum > 0.0);
+    QVERIFY2(std::abs(hop.jitterMs() - sum / 3.0) < 1e-3,
+             qPrintable(QStringLiteral("%1 != %2").arg(hop.jitterMs()).arg(sum / 3.0)));
     session.stop();
 }
 
