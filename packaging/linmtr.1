@@ -289,6 +289,12 @@ box and push
 The table updates while the trace runs.
 .B Stop
 ends the trace.
+While a trace runs, the status bar shows the host.
+For a host name, it also shows the address that
+.B linmtr
+probes, for example
+.RB \(lq "Tracing example.com (192.0.2.1)" \(rq.
+Each start resolves the host name again, so a new DNS answer shows there.
 The copy and export buttons also work while a trace runs.
 The export dialog suggests the file name
 .BI linmtr\- HOST .txt

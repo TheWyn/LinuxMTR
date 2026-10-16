@@ -176,7 +176,10 @@ The package depends on `qt6-base`, `glibc`, `libgcc`, `libstdc++` and
 Start **LinMTR** from the application menu, or run `linmtr`. Type a host name or IP
 address and push **Start** (or press Enter). Push **Stop** to end the trace.
 Double-click a hop to see its details. The status bar shows `Ready`,
-`Resolving host <host>...`, `Tracing <host>` or the last error.
+`Resolving host <host>...`, `Tracing <host> (<address>)` or the last error. The address is
+the IP address that LinMTR probes. Each **Start** resolves the host name again, so a new
+DNS answer shows here. When the host is an IP address, the status bar shows
+`Tracing <host>`.
 
 `linmtr HOST` opens the window with `HOST` in the host box and starts the trace
 immediately.
@@ -321,6 +324,7 @@ order and report layout. Its internals are new and designed for Linux.
 | About | An about label in **Options** | **License and Credits** dialog |
 | Host properties | Non-modal; it updates while the trace runs, and it shows real statistics. For a hop without an address, the comment is the ICMP error text or `No response from host`. For a hop with an address, **Name** shows its host name or address, and the comment is the ICMP error text or `Host alive.` It also shows **Jitter**, and **Loss (%)** with one decimal. | A modal snapshot. For a hop without an address, the statistics are zeros, and the comment is the ICMP error text or empty. For a hop with an address, **Name** shows the ICMP error text instead of the host name, and the comment is `Host alive.` No jitter; the loss is an integer. |
 | Graphs | Per-hop graph in Host properties; optional route graph under the table | None |
+| Status bar | `Ready`; `Tracing <host> (<address>)` while a trace runs (`Tracing <host>` for an IP address); the last error | Its version and the Appnor text; `Double click on host name for more information.` while a trace runs; `Unable to resolve hostname.` in a message box |
 | Host history | Newest first; a host that you trace again moves to the top. A host goes in only after its name resolved, as in WinMTR. | New hosts at the end, no reordering |
 | Reports | Same layout; title `LinMTR statistics` (same length as `WinMTR statistics`, so columns align); `\n` line endings | `\r\n` line endings |
 | Export file name | `linmtr-<host>.txt` or `.html` suggested | None |

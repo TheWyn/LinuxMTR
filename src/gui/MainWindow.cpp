@@ -385,6 +385,16 @@ void MainWindow::clearHistory()
     m_hostCombo->setFocus();
 }
 
+QString MainWindow::tracingText(const QString &host, const QHostAddress &address)
+{
+    QString literal = host;
+    if (literal.size() > 2 && literal.startsWith(u'[') && literal.endsWith(u']'))
+        literal = literal.mid(1, literal.size() - 2);
+    if (address.isNull() || !QHostAddress(literal).isNull())
+        return tr("Tracing %1").arg(host);
+    return tr("Tracing %1 (%2)").arg(host, address.toString());   // one arg(): host can contain "%2"
+}
+
 void MainWindow::setStatusText(const QString &text)
 {
     m_statusLabel->setText(text);
@@ -518,7 +528,7 @@ void MainWindow::onStateChanged(TraceSession::State state)
         setStatusText(tr("Resolving host %1...").arg(m_currentHost));
         break;
     case TraceSession::State::Tracing:
-        setStatusText(tr("Tracing %1").arg(m_currentHost));
+        setStatusText(tracingText(m_currentHost, m_session->targetAddress()));
         if (!m_pendingLruHost.isEmpty()) {
             // The host resolved: now it goes into the history.
             const QString host = m_pendingLruHost;

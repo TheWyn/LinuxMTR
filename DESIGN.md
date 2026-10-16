@@ -229,6 +229,14 @@ Labels, mnemonics and button texts are verbatim upstream (`WinMTR.rc`).
   route graph (see Route graph) and the status bar. While a trace runs, the host box and
   Options stay disabled; copy and export still work. Only `hopsChanged` and `stateChanged`
   refresh the GUI.
+- Status bar: `Ready`, `Resolving host <host>...` (the upstream text),
+  `Tracing <host> (<address>)`, or the message of the last `errorOccurred`. An `infoMessage`
+  covers it for 10 s. The address is `targetAddress()`, the address that the probes go to.
+  Each start resolves a host name again, so a new DNS answer shows there.
+  `MainWindow::tracingText()` leaves out the address while it is null. It also leaves it out
+  for a host that is an IP address in a form that `start()` accepts (also in brackets). Thus
+  the text does not depend on when the session sets the address: for an IP address,
+  `start()` emits `Tracing` before it sets `targetAddress()`.
 - Table cells show integers (`sprintf("%d")`); Loss % has no `%` suffix.
 - `Clear History` (IDS_STRING_CLEAR_HISTORY) is always the last combo entry. Selecting it, or
   a start with that text (case-insensitive), empties the history without confirmation, as
@@ -403,3 +411,12 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
     name again, and upstream starts it once, at the first address of the hop. Thus an error
     that comes after that lookup ends stays until the trace ends. With name resolution off,
     every error stays.
+18. Status bar: `Ready` while no trace runs (upstream: its version and the Appnor text).
+    While a trace runs, it shows `Tracing <host> (<address>)` for a host name and
+    `Tracing <host>` for an IP address (upstream:
+    `Double click on host name for more information.`). A permanent field shows
+    `Double click on a hop for details` (upstream: a `www.appnor.com` link). A trace error
+    shows in the status bar (upstream: `Unable to resolve hostname.` in a message box).
+    `Resolving host <host>...` is the upstream text. LinMTR has no
+    `Waiting for last packets in order to stop trace ...` (upstream `WinMTRDialog.cpp:1171`
+    and `:1184`), because Stop ends the trace at once (§2).

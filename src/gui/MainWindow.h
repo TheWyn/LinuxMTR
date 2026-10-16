@@ -44,6 +44,11 @@ public:
     // History" command.
     void startTrace(const QString &host);
 
+    // Returns the status text of a running trace: "Tracing <host> (<address>)".
+    // The text has no address when address is null, or when host is an IP
+    // address in a form that TraceSession::start() accepts (also in brackets).
+    static QString tracingText(const QString &host, const QHostAddress &address);
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 
