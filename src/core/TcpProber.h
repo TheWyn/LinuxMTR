@@ -35,7 +35,7 @@ class TcpProber final : public ProbeBackend
 {
 public:
     // Most probe sockets (one fd each) open at the same time. At this cap,
-    // canSend() is false and the session skips the send.
+    // canSend(0) is false and the session skips the send.
     static constexpr int kMaxInFlight = 256;
 
     TcpProber(const QHostAddress &target, quint16 port);
@@ -59,7 +59,7 @@ public:
     // releases them with deleteLater(). Thus a probe can close inside onActivity.
     void attachNotifiers(QObject *context, const std::function<void()> &onActivity) override;
 
-    bool canSend() const override;
+    bool canSend(int reserve) const override;
     void discard(quint16 seq) override;
 
 private:

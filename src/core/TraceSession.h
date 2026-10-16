@@ -29,6 +29,7 @@ public:
     QString lastError() const;
 
     // Snapshot of the probed hops 1..N in TTL order, trimmed by the WinMTR GetMax() rule.
+    // N can be after a silent target hop (DESIGN.md §3.3).
     QList<HopStats> hops() const;
 
 public slots:

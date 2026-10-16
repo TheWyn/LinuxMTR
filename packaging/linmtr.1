@@ -255,6 +255,18 @@ Number of probes sent to the hop and number of replies received.
 Round\-trip times in milliseconds, shown as integers.
 .PP
 When the target replies, the table shows no rows after the target.
+When the path to the target gets longer, the table grows to the new target hop.
+If the old target hop sends no answer,
+.B linmtr
+waits for 10 timeouts in a row there.
+Then each round also sends search probes to the later hops.
+When the target answers 20 search probes at one hop,
+the table grows to the first hop where the target answers.
+With the defaults, this takes about 33 seconds.
+The old target hop keeps the name of the target.
+Search probes do not count in
+.B Sent
+or in the other columns.
 .PP
 The
 .B Copy Text to clipboard

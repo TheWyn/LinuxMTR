@@ -4,10 +4,12 @@
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QScopeGuard>
+#include <QSet>
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QtTest>
 
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <csignal>
@@ -15,7 +17,9 @@
 #include <cstring>
 #include <ctime>
 #include <memory>
+#include <numeric>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <arpa/inet.h>
@@ -40,6 +44,7 @@ using linmtr::core::replyRttNs;
 
 Q_DECLARE_METATYPE(ErrQueueInfo::Origin)
 Q_DECLARE_METATYPE(IcmpVerdict::Kind)
+Q_DECLARE_METATYPE(ProbeEvent::Kind)
 Q_DECLARE_METATYPE(TraceOptions::Protocol)
 
 namespace {
@@ -112,7 +117,7 @@ constexpr qint64 kReadNs = 300'000'000;
 // How long the live RTT test blocks the thread while an answer waits, in ms.
 constexpr int kStallMs = 300;
 
-// The reply timeout of the late-answer test, in ns: between two ticks of the 20 ms pump.
+// The reply timeout of the late-answer tests, in ns: between two ticks of the 20 ms pump.
 constexpr qint64 kTimeoutNs = 110'000'000;
 
 sockaddr_in v4(const char *text)
@@ -148,28 +153,46 @@ void verifyUntouched(const ErrQueueInfo &info)
     QVERIFY(info.offender.isNull());
 }
 
-// Answers each probe with the event that answer() gives for its TTL. The session
+// The result of one probe in the fake backend: its answer, or the value that
+// send() returns when no answer comes. 0 is a sent probe that times out, and an
+// errno is a failed send.
+using FakeAnswer = std::variant<ProbeEvent, int>;
+
+// Answers each probe with the result that answer() gives for its TTL. The session
 // reads an answer at the first pump tick at least holdNs after the send. An answer
 // that sets its TTL gets no seq. The session then matches it by TTL and socket, as
-// an answer that quotes only the UDP header.
+// an answer that quotes only the UDP header. A cap above 0 is the most probes in
+// flight, as for the TCP prober. A probe stays in flight until the session reads
+// its answer or discards it.
 class FakeBackend : public linmtr::core::ProbeBackend
 {
 public:
-    explicit FakeBackend(std::function<ProbeEvent(int)> answer, qint64 holdNs = 0)
-        : m_answer(std::move(answer)), m_holdNs(holdNs)
+    explicit FakeBackend(std::function<FakeAnswer(int)> answer, qint64 holdNs = 0, int cap = 0)
+        : m_answer(std::move(answer)), m_holdNs(holdNs), m_cap(cap)
     {
         m_clock.start();
     }
 
     int open() override { return 0; }
     int socketCount() const override { return 1; }
+    bool canSend(int reserve) const override
+    {
+        return m_cap == 0 || int(m_inFlight.size()) + reserve < m_cap;
+    }
     int send(int ttl, quint16 seq, int slot) override
     {
-        ProbeEvent ev = m_answer(ttl);
+        FakeAnswer result = m_answer(ttl);
+        if (const int *sendResult = std::get_if<int>(&result)) {
+            if (*sendResult == 0)
+                addInFlight(seq);
+            return *sendResult;
+        }
+        ProbeEvent &ev = std::get<ProbeEvent>(result);
         ev.hasSeq = ev.ttl == 0;
         ev.seq = seq;
         ev.slot = slot;
         m_answers.push_back({m_clock.nsecsElapsed() + m_holdNs, ev});
+        addInFlight(seq);
         return 0;
     }
     void drain(const EventSink &sink) override
@@ -179,19 +202,69 @@ public:
         std::vector<ProbeEvent> ready;
         while (!m_answers.empty() && m_answers.front().first <= now) {
             ready.push_back(m_answers.front().second);
+            m_inFlight.remove(m_answers.front().second.seq);
             m_answers.erase(m_answers.begin());
         }
         for (const ProbeEvent &ev : ready)
             sink(ev);
     }
     void attachNotifiers(QObject *, const std::function<void()> &) override {}
+    void discard(quint16 seq) override { m_inFlight.remove(seq); }
+
+    // The most probes in flight at one time.
+    qsizetype mostInFlight() const { return m_mostInFlight; }
 
 private:
-    std::function<ProbeEvent(int)> m_answer;
+    void addInFlight(quint16 seq)
+    {
+        m_inFlight.insert(seq);
+        m_mostInFlight = std::max(m_mostInFlight, m_inFlight.size());
+    }
+
+    std::function<FakeAnswer(int)> m_answer;
     qint64 m_holdNs = 0;
+    int m_cap = 0;
     QElapsedTimer m_clock;
     std::vector<std::pair<qint64, ProbeEvent>> m_answers;   // ready time, answer
+    QSet<quint16> m_inFlight;
+    qsizetype m_mostInFlight = 0;
 };
+
+// The values of the silent target hop rule (DESIGN.md §3.3): the timeouts in a
+// row that make a target hop silent, and the target answers to the search probes
+// of one later hop that move the end of the table.
+constexpr int kSilentRun = 10;
+constexpr int kSearchAnswers = 20;
+
+// The fake network of the silent target hop tests: router n at 192.0.2.n, and
+// the target at 192.0.2.9.
+const QHostAddress kFakeTarget(QStringLiteral("192.0.2.9"));
+
+ProbeEvent routerReply(int ttl)
+{
+    ProbeEvent ev;
+    ev.responder = QHostAddress(QStringLiteral("192.0.2.%1").arg(ttl));
+    return ev;
+}
+
+ProbeEvent targetReply()
+{
+    ProbeEvent ev;
+    ev.responder = kFakeTarget;
+    ev.reachedTarget = true;
+    return ev;
+}
+
+// Options for a session with the fake backend: the shortest reply timeout, no DNS.
+TraceOptions fakeOptions(double intervalSec, int maxHops)
+{
+    TraceOptions options;
+    options.intervalSec = intervalSec;
+    options.timeoutSec = 0.1;
+    options.maxHops = maxHops;
+    options.resolveNames = false;
+    return options;
+}
 
 // CLOCK_REALTIME, the clock of the kernel arrival stamps, in ns since the epoch.
 qint64 wallNowNs()
@@ -297,6 +370,17 @@ private slots:
     void sessionLateAnswer_data();
     void sessionLateAnswer();
     void sessionJitter();
+    void sessionPathLonger_data();
+    void sessionPathLonger();
+    void sessionFirstLiveTargetHop();
+    void sessionSearchAnswers_data();
+    void sessionSearchAnswers();
+    void sessionTargetOutage_data();
+    void sessionTargetOutage();
+    void sessionRateLimitedTarget();
+    void sessionSearchCap();
+    void sessionSilentRun_data();
+    void sessionSilentRun();
     void liveLoopbackTrace();
     void liveStalledReadRtt_data();
     void liveStalledReadRtt();
@@ -930,6 +1014,522 @@ void TestCoreParsers::sessionJitter()
     QVERIFY(sum > 0.0);
     QVERIFY2(std::abs(hop.jitterMs() - sum / 3.0) < 1e-3,
              qPrintable(QStringLiteral("%1 != %2").arg(hop.jitterMs()).arg(sum / 3.0)));
+    session.stop();
+}
+
+void TestCoreParsers::sessionPathLonger_data()
+{
+    // silentHops: the hops without an answer before the new target hop. The
+    // target answers with an echo reply, with a time exceeded from its address
+    // (reachedTarget false), or with an ICMP error. On the longer path, its answers
+    // come from the responder address. Another address sends a reply that reaches
+    // the target, as an anycast target does.
+    QTest::addColumn<int>("silentHops");
+    QTest::addColumn<bool>("reachedTarget");
+    QTest::addColumn<bool>("targetErrors");
+    QTest::addColumn<QString>("responder");
+
+    const QString target = kFakeTarget.toString();
+    QTest::newRow("one silent hop, time exceeded from the target address") << 1 << false << false << target;
+    QTest::newRow("two silent hops") << 2 << true << false << target;
+    QTest::newRow("two silent hops, ICMP errors from the target") << 2 << false << true << target;
+    QTest::newRow("two silent hops, replies from another address")
+        << 2 << true << false << QStringLiteral("192.0.2.10");
+}
+
+// Hops 1 to 3 are routers, and only the probe for the target hop gets an answer of
+// the target. First the target is at hop 3 + silentHops, then at hop 4, the end of
+// the table. Thus with two silent hops, hop 5 keeps the target address of the
+// older path, and hop 6 has no address. Then the path gets longer: the target
+// moves to hop 4 + silentHops, the last hop, and the hops from 4 to it send no
+// answer. After 10 timeouts in a row at hop 4, each round also sends search probes
+// to the hops after it. The target answers exactly 20 of them, then no more
+// probes. The 20th answer makes its hop the end of the table. The 10th timeout of
+// hop 5 comes before the 20th answer: only the run of the end hop starts the count
+// again. Hop 4 keeps the target address. Each answer from the target address
+// counts, also an ICMP error. A reply that reaches the target also counts, from
+// any address. Then the path gets shorter again: hop 4 answers, and the table ends
+// at hop 4 again at once. The network changes only when a round starts (the probe
+// for hop 1).
+void TestCoreParsers::sessionPathLonger()
+{
+    QFETCH(int, silentHops);
+    QFETCH(bool, reachedTarget);
+    QFETCH(bool, targetErrors);
+    QFETCH(QString, responder);
+
+    int nextTargetTtl = 3 + silentHops;   // the network for the next round
+    int targetTtl = nextTargetTtl;        // the network of this round
+    int answersLeft = 0;                  // answers of the target on the longer path
+    const auto answer = [&](int ttl) -> FakeAnswer {
+        if (ttl == 1)
+            targetTtl = nextTargetTtl;
+        if (ttl < 4)
+            return routerReply(ttl);
+        if (ttl != targetTtl)
+            return 0;
+        ProbeEvent ev = targetReply();
+        if (targetTtl == 4 + silentHops) {
+            if (answersLeft == 0)
+                return 0;
+            --answersLeft;
+            ev.responder = QHostAddress(responder);
+        }
+        ev.reachedTarget = reachedTarget;
+        if (targetErrors) {
+            ev.kind = ProbeEvent::Kind::Error;
+            ev.errorText = QStringLiteral("Destination protocol unreachable.");
+        }
+        return ev;
+    };
+    linmtr::core::setBackendFactoryForTests([&answer] { return std::make_unique<FakeBackend>(answer); });
+    const auto restore = qScopeGuard([] { linmtr::core::setBackendFactoryForTests({}); });
+
+    TraceSession session;
+    QSignalSpy errors(&session, &TraceSession::errorOccurred);
+    session.start(kFakeTarget.toString(), fakeOptions(0.1, 4 + silentHops));
+    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= 3 || !errors.isEmpty(), 10000);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(session.hops().size(), 3 + silentHops);
+    nextTargetTtl = 4;
+    QTRY_COMPARE_WITH_TIMEOUT(session.hops().size(), 4, 10000);
+
+    nextTargetTtl = 4 + silentHops;
+    answersLeft = kSearchAnswers;
+    QTRY_COMPARE_WITH_TIMEOUT(session.hops().size(), 4 + silentHops, 10000);
+    const QList<HopStats> hops = session.hops();
+    const HopStats &end = hops.constLast();
+    QCOMPARE(end.address, QHostAddress(responder));
+    QVERIFY(end.isTarget);
+    QCOMPARE(end.received, quint64(0));   // the search answers do not count
+    const HopStats &old = hops.at(3);
+    QCOMPARE(old.address, kFakeTarget);   // a timeout does not change an address
+    QVERIFY(old.isTarget);
+    QVERIFY(old.timedOut >= kSilentRun);
+
+    nextTargetTtl = 4;
+    QTRY_COMPARE_WITH_TIMEOUT(session.hops().size(), 4, 10000);
+    session.stop();
+}
+
+// Hops 1 to 3 are routers, and the target is at hop 4. Then the path gets longer
+// behind hops 4 and 5, which send no answer. The target answers every second probe
+// at hop 6 (the 2nd, the 4th and so on) and every probe at hops 7 and 8. Hop 7
+// gets 20 answers first, but the end of the table becomes hop 6: the first target
+// hop after the silent target hop, because hop 6 is not silent. Hop 6 answers in
+// the round of the move. Thus a wrong end at hop 7 stays until the round after the
+// next one, and the fake sees it when that round starts.
+void TestCoreParsers::sessionFirstLiveTargetHop()
+{
+    TraceSession session;
+    int nextTargetTtl = 4;   // the network for the next round
+    int targetTtl = 4;       // the network of this round
+    int hop6Probes = 0;      // on the longer path
+    qsizetype mostRows = 0;  // the table at each round start
+    const auto answer = [&](int ttl) -> FakeAnswer {
+        if (ttl == 1) {
+            targetTtl = nextTargetTtl;
+            mostRows = std::max(mostRows, session.hops().size());
+        }
+        if (ttl < 4)
+            return routerReply(ttl);
+        if (ttl < targetTtl || (targetTtl == 6 && ttl == 6 && ++hop6Probes % 2 == 1))
+            return 0;
+        return targetReply();
+    };
+    linmtr::core::setBackendFactoryForTests([&answer] { return std::make_unique<FakeBackend>(answer); });
+    const auto restore = qScopeGuard([] { linmtr::core::setBackendFactoryForTests({}); });
+
+    QSignalSpy errors(&session, &TraceSession::errorOccurred);
+    session.start(kFakeTarget.toString(), fakeOptions(0.1, 8));
+    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= 3 || !errors.isEmpty(), 10000);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(session.hops().size(), 4);
+
+    nextTargetTtl = 6;
+    QTRY_VERIFY_WITH_TIMEOUT(session.hops().size() > 4, 10000);
+    const int probes = hop6Probes;
+    QTRY_VERIFY_WITH_TIMEOUT(hop6Probes >= probes + 3, 10000);
+    QCOMPARE(mostRows, 6);
+    const QList<HopStats> hops = session.hops();
+    QCOMPARE(hops.size(), 6);
+    QCOMPARE(hops.constLast().address, kFakeTarget);
+    session.stop();
+}
+
+void TestCoreParsers::sessionSearchAnswers_data()
+{
+    // The answers at hop 6: replies of the target, ICMP errors from router 5, or
+    // local errors. periods: the answers in each silent period of hop 4.
+    QTest::addColumn<ProbeEvent::Kind>("kind");
+    QTest::addColumn<QList<int>>("periods");
+
+    QTest::newRow("target replies") << ProbeEvent::Kind::Reply << QList<int>{kSearchAnswers - 1, 2};
+    QTest::newRow("router errors") << ProbeEvent::Kind::Error << QList<int>{kSearchAnswers};
+    QTest::newRow("local errors") << ProbeEvent::Kind::Lost << QList<int>{kSearchAnswers};
+}
+
+// Hops 1 to 3 are routers, and the target is at hop 4, the end of the table. For
+// some periods, the path changes: hop 4 sends no answer, a router answers at hop
+// 5, and hop 6 answers. With target replies, hop 6 answers 19 search probes in the
+// first silent period of hop 4, and 2 in the second. Router answers do not count,
+// and the count starts again with each silent period of hop 4. An ICMP error from
+// a router and a local error are not answers of the target. Thus the end of the
+// table stays at hop 4. After each period, hop 4 answers again. The network
+// changes only when a round starts (the probe for hop 1), and the fake reads the
+// table then.
+void TestCoreParsers::sessionSearchAnswers()
+{
+    QFETCH(ProbeEvent::Kind, kind);
+    QFETCH(QList<int>, periods);
+
+    TraceSession session;
+    bool nextDown = false;   // the network for the next round
+    bool down = false;       // the network of this round
+    int answersLeft = 0;     // answers at hop 6 in this silent period
+    int hop6Probes = 0;
+    qsizetype mostRows = 0;  // the table at each round start
+    const auto answer = [&](int ttl) -> FakeAnswer {
+        if (ttl == 1) {
+            down = nextDown;
+            mostRows = std::max(mostRows, session.hops().size());
+        }
+        if (ttl < 4 || (down && ttl == 5))
+            return routerReply(ttl);
+        if (ttl == 4 && !down)
+            return targetReply();
+        if (ttl == 6) {
+            ++hop6Probes;
+            if (down && answersLeft > 0) {
+                --answersLeft;
+                ProbeEvent ev = kind == ProbeEvent::Kind::Reply ? targetReply() : ProbeEvent();
+                ev.kind = kind;
+                if (kind == ProbeEvent::Kind::Error) {
+                    ev.responder = routerReply(5).responder;
+                    ev.errorText = QStringLiteral("Destination host unreachable.");
+                }
+                return ev;
+            }
+        }
+        return 0;
+    };
+    linmtr::core::setBackendFactoryForTests([&answer] { return std::make_unique<FakeBackend>(answer); });
+    const auto restore = qScopeGuard([] { linmtr::core::setBackendFactoryForTests({}); });
+
+    QSignalSpy errors(&session, &TraceSession::errorOccurred);
+    session.start(kFakeTarget.toString(), fakeOptions(0.1, 6));
+    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= 3 || !errors.isEmpty(), 10000);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(session.hops().size(), 4);
+
+    for (const int answers : periods) {
+        const quint64 received = session.hops().value(3).received;
+        const int probes = hop6Probes;
+        answersLeft = answers;
+        nextDown = true;
+        // Three probes after the last answer: a wrong end shows at a round start.
+        QTRY_VERIFY_WITH_TIMEOUT(hop6Probes >= probes + answers + 3, 10000);
+        QCOMPARE(answersLeft, 0);
+        nextDown = false;
+        QTRY_VERIFY_WITH_TIMEOUT(session.hops().value(3).received > received, 10000);
+    }
+    QCOMPARE(mostRows, 4);
+    QCOMPARE(session.hops().size(), 4);
+    session.stop();
+}
+
+void TestCoreParsers::sessionTargetOutage_data()
+{
+    QTest::addColumn<int>("oldTargetTtl");   // the target hop before the path gets shorter
+    QTest::addColumn<int>("targetTtl");      // the target hop before and after the outage
+    QTest::addColumn<bool>("downInRound2");  // the outage starts with round 2
+
+    QTest::newRow("hops past the target from a longer path") << 6 << 4 << false;
+    QTest::newRow("hops past the target from round 1") << 2 << 2 << true;
+}
+
+// The hops after the target hop keep target answers from an older path, or from
+// round 1 (round 1 can probe hops 3 and 4 before the answer of hop 2 arrives). Then
+// the target sends no answer. After 10 timeouts in a row, each round also sends
+// search probes to the hops after the target hop. The send of the first search
+// probe to the next hop fails. No search probe gets an answer, so the table keeps
+// its end. When the target answers again, the search probes stop. Then the path
+// gets longer, and a router answers at the old target hop: the next hop, which the
+// search probes reached, shows none of them. The network changes only when a round
+// starts (the probe for hop 1), and the fake reads the table then.
+void TestCoreParsers::sessionTargetOutage()
+{
+    QFETCH(int, oldTargetTtl);
+    QFETCH(int, targetTtl);
+    QFETCH(bool, downInRound2);
+
+    TraceSession session;
+    int nextTargetTtl = oldTargetTtl;   // the network for the next round
+    bool nextDown = false;
+    int roundTargetTtl = oldTargetTtl;  // the network of this round
+    bool roundDown = false;
+    bool sendFailed = false;
+    qsizetype mostRows = 0;             // the table at each round start
+    std::vector<int> probes(9, 0);      // index = ttl
+    const auto answer = [&](int ttl) -> FakeAnswer {
+        const int count = ++probes[static_cast<std::size_t>(ttl)];
+        if (ttl == 1) {
+            if (downInRound2 && count == 2)
+                nextDown = true;
+            roundTargetTtl = nextTargetTtl;
+            roundDown = nextDown;
+            mostRows = std::max(mostRows, session.hops().size());
+        }
+        if (ttl < roundTargetTtl)
+            return routerReply(ttl);
+        if (!roundDown)
+            return targetReply();
+        if (ttl == roundTargetTtl + 1 && !sendFailed) {
+            sendFailed = true;
+            return ENETUNREACH;
+        }
+        return 0;
+    };
+    const auto probesPastTarget = [&] {
+        return std::accumulate(probes.begin() + targetTtl + 1, probes.end(), 0);
+    };
+    linmtr::core::setBackendFactoryForTests([&answer] { return std::make_unique<FakeBackend>(answer); });
+    const auto restore = qScopeGuard([] { linmtr::core::setBackendFactoryForTests({}); });
+
+    QSignalSpy errors(&session, &TraceSession::errorOccurred);
+    session.start(kFakeTarget.toString(), fakeOptions(0.1, 8));
+    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= 3 || !errors.isEmpty(), 10000);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(session.hops().size(), oldTargetTtl);
+    nextTargetTtl = targetTtl;
+    QTRY_COMPARE_WITH_TIMEOUT(session.hops().size(), targetTtl, 10000);
+
+    mostRows = 0;
+    const int before = probesPastTarget();
+    nextDown = true;
+    QTRY_VERIFY_WITH_TIMEOUT(probesPastTarget() >= before + 3 * (8 - targetTtl), 10000);
+    const HopStats silent = session.hops().constLast();
+    QCOMPARE(silent.ttl, targetTtl);
+    QCOMPARE(silent.address, kFakeTarget);
+    QVERIFY(silent.isTarget);
+    QVERIFY(silent.timedOut >= kSilentRun);
+
+    nextDown = false;
+    QTRY_VERIFY_WITH_TIMEOUT(session.hops().constLast().received >= silent.received + 2, 10000);
+    const int past = probesPastTarget();
+    QTest::qWait(300);
+    QCOMPARE(probesPastTarget(), past);
+    QCOMPARE(mostRows, targetTtl);
+
+    nextTargetTtl = targetTtl + 1;
+    QTRY_COMPARE_WITH_TIMEOUT(session.hops().size(), targetTtl + 1, 10000);
+    const HopStats next = session.hops().constLast();
+    QVERIFY(sendFailed);
+    QCOMPARE(next.address, kFakeTarget);
+    QCOMPARE(next.timedOut, quint64(0));
+    QVERIFY(next.sent <= next.received + 1);   // at most one probe in flight
+    session.stop();
+}
+
+// The target at hop 3 limits its answers as Linux limits its ICMP errors to each
+// source. It sends 6 at once, then 1 for each interval of the trace (1 s in Linux).
+// The target goes down, and the search probes go to hops 4 to 12. Then the target
+// comes back after the probe of hop 3 and before the search probes of that round.
+// The search probes take the 6 answers. The probe of hop 3 is the first probe of
+// each round that reaches the target, so it gets the next answer. Thus the end of
+// the table stays at hop 3. The fake reads the table at each round start.
+void TestCoreParsers::sessionRateLimitedTarget()
+{
+    // A model of inet_peer_xrlim_allow(): the bucket fills with the time, in ms, and
+    // holds the cost of 6 answers.
+    constexpr qint64 kCostMs = 200;   // one interval
+    qint64 bucketMs = 6 * kCostMs;
+    qint64 lastMs = 0;
+    QElapsedTimer clock;
+    clock.start();
+    const auto allow = [&] {
+        const qint64 now = clock.elapsed();
+        bucketMs = std::min(bucketMs + now - lastMs, 6 * kCostMs);
+        lastMs = now;
+        if (bucketMs < kCostMs)
+            return false;
+        bucketMs -= kCostMs;
+        return true;
+    };
+
+    TraceSession session;
+    bool goDown = false;    // the target stops answering from the next round
+    bool comeBack = false;  // the target answers again from the next search probe
+    bool down = false;
+    int searchProbes = 0;
+    qsizetype mostRows = 0; // the table at each round start
+    const auto answer = [&](int ttl) -> FakeAnswer {
+        if (ttl == 1) {
+            down = down || std::exchange(goDown, false);
+            mostRows = std::max(mostRows, session.hops().size());
+        }
+        if (ttl < 3)
+            return routerReply(ttl);
+        if (ttl > 3) {
+            ++searchProbes;
+            if (std::exchange(comeBack, false))
+                down = false;
+        }
+        if (down || !allow())
+            return 0;
+        return targetReply();
+    };
+    linmtr::core::setBackendFactoryForTests([&answer] { return std::make_unique<FakeBackend>(answer); });
+    const auto restore = qScopeGuard([] { linmtr::core::setBackendFactoryForTests({}); });
+
+    QSignalSpy errors(&session, &TraceSession::errorOccurred);
+    session.start(kFakeTarget.toString(), fakeOptions(0.2, 12));
+    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= 3 || !errors.isEmpty(), 10000);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(session.hops().size(), 3);
+
+    goDown = true;
+    QTRY_VERIFY_WITH_TIMEOUT(searchProbes >= 2 * 9, 10000);
+    const quint64 received = session.hops().value(2).received;
+    mostRows = 0;
+    comeBack = true;
+    QTRY_VERIFY_WITH_TIMEOUT(session.hops().value(2).received > received || session.hops().size() > 3,
+                             20000);
+    QCOMPARE(session.hops().size(), 3);
+    QVERIFY(session.hops().value(2).received > received);
+    QCOMPARE(mostRows, 3);
+    session.stop();
+}
+
+// The fake takes at most 40 probes in flight, as the TCP prober takes 256. Hops 1
+// to 5 are routers, and the target at hop 6 stops answering. With a reply timeout
+// of 0.5 s, the search probes of 5 rounds would be in flight: more than the fake
+// takes. A search probe leaves room for one probe of each hop up to the end. Thus
+// the session skips no probe that counts, and it emits no capacity notice.
+void TestCoreParsers::sessionSearchCap()
+{
+    static constexpr int kCap = 40;
+    bool down = false;
+    const auto answer = [&down](int ttl) -> FakeAnswer {
+        if (ttl < 6)
+            return routerReply(ttl);
+        if (down)
+            return 0;
+        return targetReply();
+    };
+    FakeBackend *fake = nullptr;
+    linmtr::core::setBackendFactoryForTests([&answer, &fake] {
+        auto backend = std::make_unique<FakeBackend>(answer, 0, kCap);
+        fake = backend.get();
+        return backend;
+    });
+    const auto restore = qScopeGuard([] { linmtr::core::setBackendFactoryForTests({}); });
+
+    TraceOptions options = fakeOptions(0.1, 30);
+    options.timeoutSec = 0.5;
+    TraceSession session;
+    QSignalSpy errors(&session, &TraceSession::errorOccurred);
+    QSignalSpy notices(&session, &TraceSession::infoMessage);
+    session.start(kFakeTarget.toString(), options);
+    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= 3 || !errors.isEmpty(), 10000);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(session.hops().size(), 6);
+
+    down = true;
+    // The search probes fill the fake up to the room for hops 1 to 6.
+    QTRY_VERIFY_WITH_TIMEOUT(fake->mostInFlight() >= kCap - 6, 10000);
+    const int rounds = session.roundsCompleted();
+    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= rounds + 10, 10000);
+    QVERIFY2(notices.isEmpty(), qPrintable(notices.value(0).value(0).toString()));
+    QCOMPARE(session.hops().size(), 6);
+    // Each completed round sent one probe to each hop of the table.
+    for (const HopStats &hop : session.hops())
+        QVERIFY2(hop.sent >= quint64(session.roundsCompleted()), qPrintable(QString::number(hop.ttl)));
+    session.stop();
+}
+
+void TestCoreParsers::sessionSilentRun_data()
+{
+    // The result of each probe of hop 1, in order. After the script, the target replies.
+    //   R: a reply from the target
+    //   r: a reply from router 1
+    //   T: no answer (a timeout)
+    //   Z: a reply that arrives at the reply timeout (late)
+    //   E: an ICMP error from a router
+    //   L: a local error
+    //   F: a failed send
+    QTest::addColumn<QByteArray>("script");
+    QTest::addColumn<bool>("probesPast");   // the session probes hop 2 after round 1
+
+    QTest::newRow("9 timeouts, an ICMP error, a timeout") << QByteArray("RTTTTTTTTTET") << false;
+    QTest::newRow("9 timeouts, a local error, a timeout") << QByteArray("RTTTTTTTTTLT") << false;
+    QTest::newRow("10 timeouts and a failed send") << QByteArray("RTTTTTFTTTTT") << true;
+    QTest::newRow("9 timeouts, then a failed send") << QByteArray("RTTTTTTTTTF") << false;
+    QTest::newRow("10 timeouts, one with a late reply") << QByteArray("RTTTTTZTTTT") << true;
+    QTest::newRow("10 timeouts at a router") << QByteArray("rTTTTTTTTTT") << false;
+}
+
+// Hop 1 is the end of the table. A search probe to hop 2 goes in the pump tick of
+// the probe of hop 1, after it. Thus hop 2 gets a probe in each round that starts
+// while hop 1 has 10 or more timeouts in a row. An answer, an ICMP error or a local
+// error ends the run. A failed send does not change it, and a late reply is a
+// timeout. Only a silent target hop starts the search. Hop 2 answers with the
+// address of router 1, so the trimming also ends the table at hop 1 when hop 1 is a
+// router. The fake holds each answer until the reply timeout. Thus the session
+// reads it in the pump tick that expires its probe, before the sweep. Each probe
+// resolves before the next round starts.
+void TestCoreParsers::sessionSilentRun()
+{
+    QFETCH(QByteArray, script);
+    QFETCH(bool, probesPast);
+
+    int sent = 0;
+    int past = 0;
+    const auto answer = [&](int ttl) -> FakeAnswer {
+        if (ttl > 1) {
+            if (sent > 1)
+                ++past;
+            return routerReply(1);
+        }
+        const char result = sent < script.size() ? script.at(sent) : 'R';
+        ++sent;
+        ProbeEvent ev;
+        switch (result) {
+        case 'r':
+            return routerReply(1);
+        case 'T':
+            return 0;
+        case 'Z':
+            ev = targetReply();
+            ev.rttUs = quint32(kTimeoutNs / 1000);
+            return ev;
+        case 'F':
+            return ENETUNREACH;
+        case 'E':
+            ev.kind = ProbeEvent::Kind::Error;
+            ev.responder = QHostAddress(QStringLiteral("192.0.2.1"));
+            ev.errorText = QStringLiteral("Destination host unreachable.");
+            return ev;
+        case 'L':
+            ev.kind = ProbeEvent::Kind::Lost;
+            return ev;
+        default:
+            return targetReply();
+        }
+    };
+    linmtr::core::setBackendFactoryForTests(
+        [&answer] { return std::make_unique<FakeBackend>(answer, kTimeoutNs); });
+    const auto restore = qScopeGuard([] { linmtr::core::setBackendFactoryForTests({}); });
+
+    TraceOptions options = fakeOptions(0.2, 2);
+    options.timeoutSec = kTimeoutNs / 1e9;
+    TraceSession session;
+    QSignalSpy errors(&session, &TraceSession::errorOccurred);
+    session.start(kFakeTarget.toString(), options);
+    QTRY_VERIFY_WITH_TIMEOUT(sent > script.size() + 1 || !errors.isEmpty(), 15000);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(past > 0, probesPast);
+    QCOMPARE(session.hops().size(), 1);
     session.stop();
 }
 

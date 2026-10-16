@@ -163,9 +163,13 @@ public:
     virtual void drain(const EventSink &sink) = 0;
     virtual void attachNotifiers(QObject *context, const std::function<void()> &onActivity) = 0;
 
-    // False while the backend cannot take one more probe (resource cap). The
-    // session then skips the send and does not count it.
-    virtual bool canSend() const { return true; }
+    // False while the backend cannot take reserve + 1 more probes (resource cap).
+    // The session then skips the send and does not count it.
+    virtual bool canSend(int reserve) const
+    {
+        Q_UNUSED(reserve);
+        return true;
+    }
 
     // True when an answer can arrive without the seq of the probe. The session
     // then matches it by TTL and socket only (UDP: routers that quote only the

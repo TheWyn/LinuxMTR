@@ -43,6 +43,12 @@ constexpr int kCoalesceMs = 100;               // shortest time between two hops
 // pump tick sends all due probes, so a shorter delay sends groups (DESIGN.md §3.3).
 constexpr qint64 kMaxStaggerNs = 20'000'000;
 constexpr qsizetype kMaxPending = 60000;       // keeps the 16-bit seq space from filling
+// Silent target hop (DESIGN.md §3.3): a target hop with this many timeouts in a row
+// is silent.
+constexpr int kSilentTimeouts = 10;
+// This many target answers to the search probes of one hop move the end of the
+// table past the silent target hops before that hop.
+constexpr int kSearchAnswers = 20;
 // Largest UDP socket pool. Wider engine-only settings stay exact: sendProbe()
 // skips a probe whose socket still has one in flight for its TTL.
 constexpr int kMaxUdpSockets = linmtr::core::kMaxProberSockets;
@@ -89,6 +95,7 @@ struct TraceSession::Private
         int slot = 0;          // prober socket that sent the probe
         qint64 sentAtNs = 0;
         qint64 sentAtMs = 0;   // wall clock, for HopSample
+        bool counts = true;    // false: a search probe past the end of the table
     };
 
     struct Round
@@ -129,7 +136,10 @@ struct TraceSession::Private
     quint16 allocateSeq();
 
     // bookkeeping
+    bool isTargetHop(std::size_t at) const;
+    bool isSilentTargetHop(std::size_t at) const;
     int currentMaxTtl() const;
+    int probeLimit() const;
     void updateHopAddress(HopStats &hop, const QHostAddress &address, bool reachedTarget);
     void onHostResolved(const QHostAddress &address, const QString &name);
     void markDirty();
@@ -144,6 +154,15 @@ struct TraceSession::Private
     QString lastError;
 
     std::vector<HopStats> hopStats;   // index = ttl - 1, sized options.maxHops
+
+    // Per hop, for the silent target hop (DESIGN.md §3.3).
+    struct Silence
+    {
+        int timeouts = 0;        // timeouts in a row; each other event of a probe sets 0
+        int searchAnswers = 0;   // target answers to search probes since the last reset
+        bool skipped = false;    // the end of the table goes past this silent target hop
+    };
+    std::vector<Silence> silence;     // index = ttl - 1, sized options.maxHops
 
     std::unique_ptr<ProbeBackend> prober;
     DnsResolver dns;
@@ -206,6 +225,7 @@ void TraceSession::Private::resetForStart(const QString &newTarget, const TraceO
     hopStats.assign(static_cast<std::size_t>(options.maxHops), HopStats{});
     for (std::size_t i = 0; i < hopStats.size(); ++i)
         hopStats[i].ttl = static_cast<int>(i) + 1;
+    silence.assign(hopStats.size(), Silence{});
 
     pending.clear();
     inFlight.clear();
@@ -505,6 +525,35 @@ void TraceSession::Private::onProbeEvent(const ProbeEvent &ev)
     if (rttNs >= timeoutNs && rttNs < readNs)
         return;
 
+    // Each event of a probe ends the run of timeouts and the skip of its hop
+    // (DESIGN.md §3.3).
+    Silence &hopSilence = silence[static_cast<std::size_t>(ttl - 1)];
+    hopSilence.timeouts = 0;
+    hopSilence.skipped = false;
+    if (!it->counts) {
+        // A search probe changes no statistics. Its answer sets the hop address as
+        // for a counted probe.
+        const bool fromTarget = sameAddress(ev.responder, targetAddress);
+        bool targetAnswer = false;
+        if (ev.kind == ProbeEvent::Kind::Reply) {
+            updateHopAddress(hop, ev.responder, ev.reachedTarget);
+            targetAnswer = ev.reachedTarget || fromTarget;
+        } else if (ev.kind == ProbeEvent::Kind::Error && fromTarget) {
+            updateHopAddress(hop, ev.responder, true);
+            targetAnswer = true;
+        }
+        // The target answers behind the silent target hops before this hop.
+        if (targetAnswer && ++hopSilence.searchAnswers >= kSearchAnswers) {
+            for (std::size_t at = 0; at + 1 < static_cast<std::size_t>(ttl); ++at) {
+                if (isSilentTargetHop(at))
+                    silence[at].skipped = true;
+            }
+        }
+        releasePending(it);
+        markDirty();
+        return;
+    }
+
     switch (ev.kind) {
     case ProbeEvent::Kind::Reply: {
         const double rtt = static_cast<double>(rttNs) / 1e6;
@@ -603,11 +652,14 @@ void TraceSession::Private::startRound(qint64 now)
 void TraceSession::Private::sendDue(qint64 now, bool force)
 {
     while (roundActive) {
-        if (nextTtl > options.maxHops || nextTtl > currentMaxTtl()) {
+        if (nextTtl > options.maxHops || nextTtl > probeLimit()) {
             finishRoundSending();
             break;
         }
-        const qint64 due = roundStartNs + static_cast<qint64>(nextTtl - 1) * staggerNs;
+        // A search probe goes in the pump tick of the end hop, after it. Thus a
+        // target with a rate limit answers the end hop first (DESIGN.md §3.3).
+        const int dueTtl = std::min(nextTtl, currentMaxTtl());
+        const qint64 due = roundStartNs + static_cast<qint64>(dueTtl - 1) * staggerNs;
         if (!force && due > now)
             break;
         sendProbe(nextTtl);
@@ -619,9 +671,14 @@ void TraceSession::Private::sendProbe(int ttl)
 {
     if (!prober || ttl < 1 || ttl > static_cast<int>(hopStats.size()))
         return;
+    // A search probe past the end of the table (DESIGN.md §3.3) changes no statistics.
+    // It leaves room in the backend for one probe of each hop up to the end.
+    const bool counts = ttl <= currentMaxTtl();
+    if (!counts && !prober->canSend(currentMaxTtl()))
+        return;
     // Engine cap (extreme settings: skip, do not reuse a live seq) and backend
     // cap (TCP: sockets in flight). A skipped probe does not count as sent.
-    if (pending.size() >= kMaxPending || !prober->canSend()) {
+    if (pending.size() >= kMaxPending || !prober->canSend(0)) {
         reportCapacity();
         return;
     }
@@ -646,16 +703,19 @@ void TraceSession::Private::sendProbe(int ttl)
     const qint64 sentAt = clock.nsecsElapsed();
     const qint64 sentAtMs = QDateTime::currentMSecsSinceEpoch();
     const int err = prober->send(ttl, seq, slot);
-    ++hop.sent;
+    if (counts)
+        ++hop.sent;
     if (err == 0) {
-        pending.insert(seq, Pending{ttl, currentRound, slot, sentAt, sentAtMs});
+        pending.insert(seq, Pending{ttl, currentRound, slot, sentAt, sentAtMs, counts});
         if (slotInFlight != nullptr)
             ++*slotInFlight;
         ++round.outstanding;
         ++round.sendOk;
     } else {
-        ++hop.timedOut;
-        hop.addSample(currentRound, -1.0f, sentAtMs);
+        if (counts) {
+            ++hop.timedOut;
+            hop.addSample(currentRound, -1.0f, sentAtMs);
+        }
         ++round.sendFailed;
         lastSendErrno = err;
         if (!reportedErrnos.contains(err)) {
@@ -694,9 +754,18 @@ void TraceSession::Private::sweepTimeouts(qint64 now)
         }
         const int ttl = it->ttl;
         if (ttl >= 1 && ttl <= static_cast<int>(hopStats.size())) {
-            HopStats &hop = hopStats[static_cast<std::size_t>(ttl - 1)];
-            ++hop.timedOut;
-            hop.addSample(it->round, -1.0f, it->sentAtMs);
+            const std::size_t at = static_cast<std::size_t>(ttl - 1);
+            if (it->counts) {
+                HopStats &hop = hopStats[at];
+                ++hop.timedOut;
+                hop.addSample(it->round, -1.0f, it->sentAtMs);
+            }
+            // A new silent period of the end hop: only the search answers after it count.
+            if (++silence[at].timeouts == kSilentTimeouts && ttl == currentMaxTtl()
+                && isTargetHop(at)) {
+                for (std::size_t later = at + 1; later < silence.size(); ++later)
+                    silence[later].searchAnswers = 0;
+            }
         }
         if (prober)
             prober->discard(it.key());   // TCP: closes the probe's socket
@@ -729,18 +798,29 @@ quint16 TraceSession::Private::allocateSeq()
     return nextSeq++;
 }
 
-// WinMTR GetMax(): stop at the first hop that is the target; otherwise trim
-// trailing hops while the last two share the same non-null address.
 // "Is the target" also covers a destination that answered from another of its
 // addresses (isTarget, see ProbeEvent::reachedTarget).
+bool TraceSession::Private::isTargetHop(std::size_t at) const
+{
+    return hopStats[at].isTarget || sameAddress(hopStats[at].address, targetAddress);
+}
+
+bool TraceSession::Private::isSilentTargetHop(std::size_t at) const
+{
+    return silence[at].timeouts >= kSilentTimeouts && isTargetHop(at);
+}
+
+// WinMTR GetMax(): stop at the first hop that is the target; otherwise trim
+// trailing hops while the last two share the same non-null address. A skipped
+// silent target hop does not stop it (DESIGN.md §3.3).
 int TraceSession::Private::currentMaxTtl() const
 {
     const int n = static_cast<int>(hopStats.size());
     if (n == 0)
         return 0;
     for (int i = 0; i < n; ++i) {
-        const HopStats &hop = hopStats[static_cast<std::size_t>(i)];
-        if (hop.isTarget || sameAddress(hop.address, targetAddress))
+        const std::size_t at = static_cast<std::size_t>(i);
+        if (isTargetHop(at) && !silence[at].skipped)
             return i + 1;
     }
     int max = n;
@@ -752,6 +832,16 @@ int TraceSession::Private::currentMaxTtl() const
         --max;
     }
     return max;
+}
+
+// The highest TTL to probe: currentMaxTtl(), or maxHops while the hop there is a
+// silent target hop. The target can then answer behind it (DESIGN.md §3.3).
+int TraceSession::Private::probeLimit() const
+{
+    const int end = currentMaxTtl();
+    if (end >= 1 && isSilentTargetHop(static_cast<std::size_t>(end - 1)))
+        return static_cast<int>(hopStats.size());
+    return end;
 }
 
 void TraceSession::Private::updateHopAddress(HopStats &hop, const QHostAddress &address,

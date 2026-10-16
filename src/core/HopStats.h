@@ -23,9 +23,11 @@ struct HopStats
     QString hostname;            // reverse-DNS result; empty until resolved
     QString errorText;           // WinMTR text of the latest ICMP error; the next reply
                                  // clears it. displayHost() shows it first
-    quint64 sent = 0;            // probes sent, including those still in flight
+    quint64 sent = 0;            // probes sent, including those still in flight; search
+                                 // probes do not count (DESIGN.md §3.3)
     quint64 received = 0;
-    quint64 timedOut = 0;        // probes that exceeded the reply timeout
+    quint64 timedOut = 0;        // probes without a reply: timeouts, ICMP errors, local
+                                 // errors and failed sends; search probes do not count
     double lastMs = 0.0;
     double bestMs = 0.0;
     double worstMs = 0.0;
@@ -34,7 +36,8 @@ struct HopStats
     bool isTarget = false;       // the trace reached the target at this hop
 
     // The newest kHistoryRounds probe results in ascending round order. A round
-    // in which the hop got no probe has no entry. Reports do not use it.
+    // in which the hop got no probe, or only a search probe, has no entry. Reports
+    // do not use it.
     static constexpr int kHistoryRounds = 3600;
     QList<HopSample> history;
 

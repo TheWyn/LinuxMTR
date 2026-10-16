@@ -34,7 +34,8 @@ contains no Windows code. The literal UI and report strings are copies on purpos
 The GUI talks to the engine only through `TraceSession`, `HopStats` and `TraceOptions`; the
 headers are authoritative. `start(target, options)` resolves, then probes continuously (a call
 while active calls `stop()` first). `stop()` is a synchronous teardown to `Idle`. `hops()` is a
-snapshot of the probed hops in TTL order, trimmed by the upstream `GetMax()` rule (§3.3).
+snapshot of the probed hops in TTL order, trimmed by the upstream `GetMax()` rule. The end can
+be after a silent target hop (§3.3).
 Signals: `stateChanged`, `hopsChanged` (coalesced, §3.3), `roundCompleted(int)`,
 `errorOccurred(QString)` (fatal; back to `Idle`) and `infoMessage(QString)` (non-fatal).
 Read access: `state()` (`Idle`, `Resolving`, `Tracing`), `target()`, `targetAddress()` (valid
@@ -102,9 +103,9 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   the trimming (§3.3) stops the probes at that router until the trace ends. Exception: an
   error from the target address makes the hop the target hop (§8 item 15). Each reply (echo
   reply, time exceeded, target reached) clears `errorText` (§8 item 17).
-- A failed `sendto()` counts the probe as sent and timed out, with one `infoMessage` per
-  errno. A round in which a send succeeded arms this notice again. When no send of the first
-  round succeeds, the session emits `errorOccurred`.
+- A failed `sendto()` counts the probe as sent and timed out (a search probe does not count,
+  §3.3), with one `infoMessage` per errno. A round in which a send succeeded arms this notice
+  again. When no send of the first round succeeds, the session emits `errorOccurred`.
 - RTT: the RTT ends at the time when the kernel received the answer, not at the read. Every
   probe socket has `SO_TIMESTAMPNS`. Thus each `recvmsg()`, from the normal queue or the error
   queue, also gives the arrival stamp (`CLOCK_REALTIME`, `decodeArrivalStamp()`). The session
@@ -142,7 +143,8 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
 - A 20 ms pump `QTimer` runs while tracing. A round starts every `intervalSec` (monotonic
   deadline). TTL k is due at `roundStart + (k - 1) * stagger`, with
   `stagger = min(20 ms, intervalSec * 1000 / (2 * maxTtl))` and `maxTtl` of the trimming
-  (below) at the start of the round. Each pump tick sends all probes that are due. Thus with
+  (below) at the start of the round. A search probe (below) is due with the probe of
+  `maxTtl`. Each pump tick sends all probes that are due, in TTL order. Thus with
   a stagger below 20 ms, the probes go in groups of about `20 ms / stagger`
   (`40 ms * maxTtl / intervalSec`). At `-i 0.1` with 30 hops, a round goes as 1, 12, 12 and
   5 probes (64 hops: 1, 25, 26 and 12). At `-i 1` with 30 hops, one or two probes go per
@@ -158,18 +160,19 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
 - After a stall, the session sends the rest of the earlier round at once and starts the due
   round. The next round starts one interval later: the session does not send the rounds that
   it missed.
-- Pending table: `seq (16-bit rolling counter) -> { ttl, round, slot, sentAtNs, sentAtMs }`.
-  `sentAtNs` is the monotonic send time for the RTT (§3.2) and the timeout; `sentAtMs` is the
-  wall-clock send time for the `HopSample`. It holds at most 60000 entries, so that the seq
-  space does not fill. At the cap, the session skips probes and emits one capacity
-  `infoMessage` per trace, as for the TCP cap. At each pump tick, the sweep
-  (`sweepTimeouts()`) runs after the read of the sockets (§3.2). It removes each entry that
-  is `timeoutSec` or older and adds `timedOut++` to its hop.
+- Pending table: `seq (16-bit rolling counter) -> { ttl, round, slot, sentAtNs, sentAtMs,
+  counts }`. `sentAtNs` is the monotonic send time for the RTT (§3.2) and the timeout;
+  `sentAtMs` is the wall-clock send time for the `HopSample`. `counts` is false for a search
+  probe (below). The table holds at most 60000 entries, so that the seq space does not fill.
+  At the cap, the session skips probes and emits one capacity `infoMessage` per trace, as for
+  the TCP cap. At each pump tick, the sweep (`sweepTimeouts()`) runs after the read of the
+  sockets (§3.2). It removes each entry that is `timeoutSec` or older and adds `timedOut++`
+  to its hop. A search probe does not change `timedOut`.
 - Every resolved probe adds one `HopSample` to its hop: the round, the RTT or a negative
   value for no reply, and the wall-clock send time (`QDateTime::currentMSecsSinceEpoch()`).
-  This includes ICMP errors, local errors, timeouts and failed sends.
-  `HopStats::addSample()` keeps the newest `kHistoryRounds` samples in round order, also when
-  a timeout resolves after a reply of a later round.
+  This includes ICMP errors, local errors, timeouts and failed sends. A search probe (below)
+  adds no sample. `HopStats::addSample()` keeps the newest `kHistoryRounds` samples in round
+  order, also when a timeout resolves after a reply of a later round.
 - Jitter: each reply after the first adds |RTT - `lastMs`| to `jitterTotalMs` before `lastMs`
   takes the new RTT (§3.2). `jitterMs()` = `jitterTotalMs / (received - 1)`; it is 0 with
   fewer than two replies. Thus the pairs follow the order in which the session reads the
@@ -187,9 +190,61 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   resolves (report mode sends exactly `--cycles` rounds).
 - A hop keeps the address of its latest reply or of an ICMP error from the target (§3.2,
   §8 item 16). It resolves the name again when the address changes.
-- Trimming (upstream `GetMax()`): `maxTtl` is the lowest TTL whose hop is the target (target
-  address or `isTarget`), and probing stops beyond it. Else, trailing hops go while the last
-  two have the same address. `hops()` returns only the rows `1..maxTtl` with `sent > 0`.
+- Trimming (upstream `GetMax()`): `maxTtl` is the lowest TTL whose hop is a target hop
+  (target address or `isTarget`) and is not skipped (below). Probing stops beyond it, except
+  for search probes. Else, trailing hops go while the last two have the same address.
+  `hops()` returns only the rows `1..maxTtl` with `sent > 0`.
+- Silent target hop (§8 item 19): each hop counts its timeouts in a row, in the order in
+  which the session resolves its probes. Each other event of a probe of the hop (an answer,
+  an ICMP error or a local error) sets the count to 0. A failed send does not change it, and
+  a late answer (§3.2) counts as a timeout. A target hop with 10 or more timeouts in a row is
+  silent. A timeout does not change an address, so a silent hop stays a target hop.
+- Search probes: while the hop at `maxTtl` is a silent target hop, each round also sends a
+  probe to each later TTL, up to `maxHops`. These probes go in the pump tick of the probe of
+  `maxTtl`, after it (above). `hops()` still ends at `maxTtl`. A search probe changes no
+  statistics of its hop (`sent`, `received`, `timedOut`, the times, the history and
+  `errorText`), also when its send fails. Its reply, or an ICMP error from the target, sets
+  the address and `isTarget` of the hop, as for a probe that counts. Thus the search probes
+  of a target outage do not show in the table.
+- Cost: the search probes cost as much as a trace to a target that never answers, up to
+  `maxHops - maxTtl` more probes in each round. The session sends a search probe only while
+  the backend has room for `maxTtl` more probes (`canSend()`). Thus the search probes do not
+  take the room of the probes that count. Only the TCP backend has a cap of its own (256
+  sockets, §3.4). During a target outage, about
+  `(maxHops - maxTtl + 1) * timeoutSec / intervalSec` TCP probes wait for an answer. With
+  30 hops and a 3 s reply timeout, they fill the cap at intervals below
+  `3 s * (31 - maxTtl) / 256`, at most about 0.35 s. Then the later TTLs get fewer search
+  probes.
+- End move: each hop also counts the answers of the target to its search probes. These are
+  the replies that reach the target, and the replies and ICMP errors from the target
+  address. When the hop at `maxTtl` gets its 10th timeout in a row, these counts of all later
+  hops go back to 0. When a hop has 20, the session skips each silent target hop before it.
+  Thus `maxTtl` becomes the first target hop that is not silent. This can be a hop before
+  the hop with 20 answers, where the target answers less often. Each event of a probe of a
+  skipped hop ends the skip. Thus when the old target hop answers again, it is at `maxTtl`
+  again at once, and the search probes stop. The old hop keeps its address, its name,
+  `isTarget` and its statistics.
+- The values 10 and 20: after a path change behind a silent hop, the table follows after
+  about `(10 + 20) * intervalSec + timeoutSec`. With a fake backend, this took 33.1 s with
+  the defaults and 3.2 s at `-i 0.1` with a 0.3 s timeout. Report mode with the default 10
+  rounds never sends search probes: 10 timeouts after the first answer of the target need
+  11 rounds.
+- Loss at the target rarely moves the end: a later hop must get 20 answers before the
+  silent hop has one event. The probes of both hops reach the target. With the same loss at
+  both hops, the probability that the later hop gets the next answer alone is at most 1/2.
+  Thus for each searched hop and silent period, a wrong move has a probability of at most
+  0.5^20 (about 1e-6). For S searched hops, it is at most about S * 0.5^20.
+- Rate limit at the target: Linux sends at most 6 ICMP errors at once to each source, then
+  1 per second (`net.ipv4.icmp_ratelimit`). The port unreachable answers to UDP probes are
+  such errors; echo replies have no such limit. Such a limit gives each new answer to the
+  first probe that comes after the limit has room again. The probe of `maxTtl` is the first
+  probe of each round that reaches the target, so it gets that answer before the search
+  probes. If search probes came later in the round, one later hop could get each answer and
+  move the end.
+- Runs with a fake backend had 50 % to 95 % loss or a rate limit at the target. After the
+  table first ended at the target, they showed no extra row. Each run took 2 to 5 minutes.
+  After an outage that ended between the probe of `maxTtl` and the search probes, the
+  silent hop answered again from the next round.
 - `hopsChanged` comes at most once per 100 ms (dirty flag and single-shot timer). Teardown
   stops the timer: an `Idle` session never emits it, and slots of `stateChanged(Idle)` read
   the final `hops()` themselves.
@@ -206,7 +261,8 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
 
 - One non-blocking `connect()` to `targetAddress:tcpPort` per probe, on its own socket with
   `IP_RECVERR` and the TTL; the socket identifies the probe. At most 256 sockets are in
-  flight; at the cap, the session skips the send and emits one `infoMessage`.
+  flight; at the cap, the session skips the send and emits one `infoMessage`. A search probe
+  (§3.3) also leaves room for `maxTtl` more sockets.
 - Target reached: a completed handshake (the prober then resets it), an RST, or an ICMP
   port unreachable from a REJECT firewall. The offender is then the hop address. The prober
   reads the error queue before `SO_ERROR`, so that the offender stays known.
@@ -322,7 +378,9 @@ accepted.
 - Each hop: `ttl` (int), `address`, `hostname` and `error` (string, or `null` when the address
   is null or the text is empty), `lossPercent` (int, `HopStats::lossPercent()`), `sent`,
   `received` and `timedOut` (int), `bestMs`, `avgMs`, `worstMs` and `lastMs` (double,
-  milliseconds rounded to 3 decimals; 0 without a reply), `isTarget` (bool).
+  milliseconds rounded to 3 decimals; 0 without a reply), `isTarget` (bool). More than one
+  hop can have `isTarget`: a silent target hop keeps it when the end moves to a later hop
+  (§3.3). The last hop is the end of the trace.
 
 The host name and the address are separate fields, so `-b` has no effect on the JSON report.
 The times have no INT_MAX limit, unlike the integer columns of the text and HTML reports.
@@ -420,3 +478,11 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
     `Resolving host <host>...` is the upstream text. LinMTR has no
     `Waiting for last packets in order to stop trace ...` (upstream `WinMTRDialog.cpp:1171`
     and `:1184`), because Stop ends the trace at once (§2).
+19. The trace can grow past a target hop that stops answering (§3.3). After 10 timeouts in
+    a row there, each round also sends search probes to the later TTLs. When the target
+    answers 20 of them at one later hop, the end of the table moves to a later row. The old
+    row stays, with the target name, `isTarget` and its loss. Thus the table follows a
+    path that got longer behind a hop that sends no time exceeded. Upstream never probes past
+    its target hop again: the thread of each later TTL ends in `TraceThread()` when its TTL
+    is above `GetMax()`. mtr also stops there: `net_send_batch()` ends each batch at the first
+    hop with the target address.

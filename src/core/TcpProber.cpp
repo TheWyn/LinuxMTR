@@ -172,9 +172,10 @@ int TcpProber::newSocket(UniqueFd *out) const
     return 0;
 }
 
-bool TcpProber::canSend() const
+bool TcpProber::canSend(int reserve) const
 {
-    return m_open && m_probes.size() < static_cast<std::size_t>(kMaxInFlight);
+    // m_probes holds at most kMaxInFlight entries, so the cast is exact.
+    return m_open && static_cast<int>(m_probes.size()) + reserve < kMaxInFlight;
 }
 
 int TcpProber::send(int ttl, quint16 seq, int slot)
@@ -183,7 +184,7 @@ int TcpProber::send(int ttl, quint16 seq, int slot)
         return EBADF;
     if (ttl < 1 || ttl > kMaxTtl || slot < 0)
         return EINVAL;
-    if (!canSend())
+    if (!canSend(0))
         return EAGAIN;
 
     UniqueFd fd;
