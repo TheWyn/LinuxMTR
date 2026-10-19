@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Copyright (C) 2026 Wyn
+
 #pragma once
 
 #include <QHostAddress>
@@ -21,8 +24,9 @@ struct HopStats
                                  // target (other ICMP errors keep it); isNull() until the
                                  // first such answer
     QString hostname;            // reverse-DNS result; empty until resolved
-    QString errorText;           // WinMTR text of the latest ICMP error; the next reply
-                                 // clears it. displayHost() shows it first
+    QString errorText;           // text of the latest ICMP error (WinMTR's, or LinMTR's for
+                                 // a code without one); the next reply clears it.
+                                 // displayHost() shows it first
     quint64 sent = 0;            // probes sent, including those still in flight; search
                                  // probes do not count (DESIGN.md §3.3)
     quint64 received = 0;

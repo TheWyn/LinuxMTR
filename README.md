@@ -154,6 +154,10 @@ conflicts with `linmtr`.
 cd packaging/arch/linmtr && makepkg -si
 ```
 
+Run this command in a checkout of `main`. The commit that sets the checksum of a release
+comes after its tag. Thus the PKGBUILD in a tag archive, or in a checkout of a tag, has the
+checksum of an earlier archive, and makepkg fails there.
+
 The package installs:
 
 | File | Path |
@@ -247,7 +251,8 @@ that shows the permitted range.
 
 In report mode, LinMTR sends exactly `--cycles` rounds and waits until each probe has a
 reply or has timed out. A hop that LinMTR probes in every round shows `Sent` equal to
-`--cycles`, and no probe is still in flight when the report prints. Report mode
+`--cycles`, and no probe is still in flight when the report prints. A signal (see below)
+prints the report at once: the probes in flight then stay in `Sent`. Report mode
 ignores the saved GUI settings, so host names show without IP addresses unless you
 give `-b`. In GUI mode, `-n`, `-b`, `-4`, `-6`, `--udp`, `--tcp`, `-P`, `-s`, `-i`,
 `--timeout` and `-m` replace the saved **Options** values for that session. LinMTR saves
@@ -318,7 +323,8 @@ order and report layout. Its internals are new and designed for Linux.
 | IPv6 | Supported. **IP version** `Auto` takes the address that the resolver lists first: a dual-stack name traces over IPv6 when this computer has IPv6 connectivity, as with mtr | IPv4 only |
 | Threading | One GUI thread, non-blocking sockets in the Qt event loop | One blocking thread per TTL |
 | Probe scheduling | Rounds, as in mtr: one probe per TTL per round, one round every `interval` seconds | Each TTL thread pings in a loop |
-| Loss % | The WinMTR integer formula `100 - 100*recv/sent`, but only over probes that got a reply or timed out | Same formula; probes still in flight count as lost |
+| Loss % and Sent | The WinMTR integer formula `100 - 100*recv/sent`, over the probes that got a reply or timed out. **Sent** counts a probe when LinMTR sends it, so it also counts the probes in flight (at the defaults, about 3 for a hop that does not answer). Such a hop shows loss 0 for the first 3 s. **Stop** ends the trace at once, and its probes in flight stay in **Sent** | The same formula over the same probes. **Sent** counts a probe only when its answer came or it timed out, so a probe in flight is in no column. **Stop** waits for the last probes |
+| Best | The lowest round-trip time of the replies of the hop, from its first reply on | `0` for the whole trace when the first probe of the hop got no reply |
 | Reply timeout | 3.0 s by default, configurable | Fixed 5 s |
 | Defaults | Interval 1.0 s, ping size 64, LRU 128, DNS on, max hops 30 | Same |
 | New options | **Max hops**, **Protocol**, **TCP port**, **IP version**, **Reply timeout**, **Show IP next to hostname**, **Show route graph** | None |

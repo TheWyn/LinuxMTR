@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Copyright (C) 2026 Wyn
+
 #pragma once
 
 #include <QHostAddress>
@@ -29,7 +32,8 @@ public:
     QString lastError() const;
 
     // Snapshot of the probed hops 1..N in TTL order, trimmed by the WinMTR GetMax() rule.
-    // N can be after a silent target hop (DESIGN.md §3.3).
+    // N can be after a silent target hop (DESIGN.md §3.3). Search probes do not count in
+    // the statistics of a hop.
     QList<HopStats> hops() const;
 
 public slots:

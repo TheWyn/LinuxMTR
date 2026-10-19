@@ -95,14 +95,25 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
 - Echo reply: the hop takes the source address, the RTT and `isTarget`.
 - Error queue: time exceeded gives an intermediate hop with the offender address and the RTT.
   Destination unreachable gives a WinMTR error string (`classifyIcmp()`) in `errorText` and
-  does not count as received, as upstream. A port unreachable for UDP and TCP probes means
-  target reached. A local error (`SO_EE_ORIGIN_LOCAL`) makes the probe lost at once.
+  does not count as received, as upstream. For a code without an upstream text, LinMTR uses
+  `Destination host unreachable (administratively prohibited).` (IPv4 code 13, ICMPv6 code
+  1) or `Destination unreachable (code N).` (other codes). A port unreachable for UDP and
+  TCP probes means target reached. A local error (`SO_EE_ORIGIN_LOCAL`) makes the probe lost
+  at once.
+- Failed ARP or NDP resolution: for an address on the local link that does not answer, this
+  host sends `Destination host unreachable.` itself. The kernel sends it 3 s or more after
+  the first probe to that address (three solicitations, one second apart). Thus with the
+  default reply timeout of 3 s, the probes of the first few hundred milliseconds of each
+  resolution time out without the error. Only the later probes of the resolution show the
+  error. In a report of one round at the defaults, the first hops thus show
+  `No response from host`, and the later hops show the error.
 - An answer that gives `errorText` does not change the hop address or `isTarget`, as upstream
   (`SetName()` only). A router can send the error for each TTL up to `maxHops`. Then each of
-  these rows shows the error text, as upstream. With the address of the router on these rows,
-  the trimming (§3.3) stops the probes at that router until the trace ends. Exception: an
-  error from the target address makes the hop the target hop (§8 item 15). Each reply (echo
-  reply, time exceeded, target reached) clears `errorText` (§8 item 17).
+  these rows shows the error text, as upstream. If these rows had the address of the router,
+  the trimming (§3.3) would stop the probes at that router until the trace ends. Thus an
+  error from a router sets no address. Exception: an error from the target address makes the
+  hop the target hop (§8 item 15).
+- Each reply (echo reply, time exceeded, target reached) clears `errorText` (§8 item 17).
 - A failed `sendto()` counts the probe as sent and timed out (a search probe does not count,
   §3.3), with one `infoMessage` per errno. A round in which a send succeeded arms this notice
   again. When no send of the first round succeeds, the session emits `errorOccurred`.
@@ -146,9 +157,9 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   (below) at the start of the round. A search probe (below) is due with the probe of
   `maxTtl`. Each pump tick sends all probes that are due, in TTL order. Thus with
   a stagger below 20 ms, the probes go in groups of about `20 ms / stagger`
-  (`40 ms * maxTtl / intervalSec`). At `-i 0.1` with 30 hops, a round goes as 1, 12, 12 and
-  5 probes (64 hops: 1, 25, 26 and 12). At `-i 1` with 30 hops, one or two probes go per
-  tick (64 hops: two or three).
+  (`40 ms * maxTtl / intervalSec`). At `-i 0.1` with 30 hops, a round usually goes as 1, 12,
+  12 and 5 probes (64 hops: usually 1, 25, 26 and 12). At `-i 1` with 30 hops, one or two
+  probes go per tick (64 hops: two or three).
 - The groups do not change the number of probes that a router gets in a round: each probe
   of a round expires at another router. Only a host that answers for more than one TTL gets
   more than one probe of a round. These hosts are the target before the trimming stops at
@@ -235,11 +246,17 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   skipped hop ends the skip. Thus when the old target hop answers again, it is at `maxTtl`
   again at once, and the search probes stop. The old hop keeps its address, its name,
   `isTarget` and its statistics.
+- Hidden target row: a hidden row between `maxTtl` and the hop with 20 answers can keep the
+  target address from an older, longer path. Then it is also a target hop. With a reply
+  timeout of more than about 10 intervals (not with the defaults), it can become `maxTtl`.
+  After its own 10th timeout in a row, the search starts again from it. It stays `maxTtl`
+  until a later hop has 20 new answers.
 - The values 10 and 20: after a path change behind a silent hop, the table follows after
-  about `(10 + 20) * intervalSec + timeoutSec`. With a fake backend, this took 33.1 s with
-  the defaults and 3.2 s at `-i 0.1` with a 0.3 s timeout. Report mode with the default 10
-  rounds never sends search probes: 10 timeouts after the first answer of the target need
-  11 rounds.
+  about `(10 + 20) * intervalSec + timeoutSec`. In manual runs with a fake backend, this took
+  33.1 s with the defaults and 3.2 s at `-i 0.1` with a 0.3 s timeout. The repository does
+  not contain these runs. A timeout of 0.3 s is below the minimum of the reply timeout option
+  (0.5 s); only the engine clamp admits it. Report mode with the default 10 rounds never
+  sends search probes: 10 timeouts after the first answer of the target need 11 rounds.
 - Loss at the target rarely moves the end: a later hop must get 20 answers before the
   silent hop has one event. The probes of both hops reach the target. With the same loss at
   both hops, the probability that the later hop gets the next answer alone is at most 1/2.
@@ -252,10 +269,10 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   probe of each round that reaches the target, so it gets that answer before the search
   probes. If search probes came later in the round, one later hop could get each answer and
   move the end.
-- Runs with a fake backend had 50 % to 95 % loss or a rate limit at the target. After the
-  table first ended at the target, they showed no extra row. Each run took 2 to 5 minutes.
-  After an outage that ended between the probe of `maxTtl` and the search probes, the
-  silent hop answered again from the next round.
+- Manual runs with a fake backend had 50 % to 95 % loss or a rate limit at the target. The
+  repository does not contain these runs. After the table first ended at the target, they
+  showed no extra row. Each run took 2 to 5 minutes. After an outage that ended between the
+  probe of `maxTtl` and the search probes, the silent hop answered again from the next round.
 - `hopsChanged` comes at most once per 100 ms (dirty flag and single-shot timer). Teardown
   stops the timer: an `Idle` session never emits it, and slots of `stateChanged(Idle)` read
   the final `hops()` themselves.
@@ -284,9 +301,10 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
 - RTT: a completed handshake gives `tcpi_rtt` of `TCP_INFO` (microseconds), which the kernel
   measures from the SYN to the SYN-ACK. The prober reads it with the resend check, in the same
   `getsockopt()` and before it closes the socket. An ICMP answer gives the stamp of its error
-  queue entry (§3.2). An RST gives no kernel value, so it uses the RTT at the read. The socket
-  that `open()` makes to check the permission stays open with `SO_TIMESTAMPNS`. The kernel
-  turns its stamps off when the last socket that uses them closes; this socket keeps them on.
+  queue entry (§3.2). An RST, or a handshake under one microsecond (loopback, `tcpi_rtt` 0),
+  gives no kernel value, so it uses the RTT at the read. The socket that `open()` makes to
+  check the permission stays open with `SO_TIMESTAMPNS`. The kernel turns its stamps off
+  when the last socket that uses them closes; this socket keeps them on.
 
 ## 4. GUI (`src/gui/`, `src/main.cpp`)
 
@@ -346,19 +364,23 @@ Labels, mnemonics and button texts are verbatim upstream (`WinMTR.rc`).
   4 px apart. Then the graph does not draw the second label or its gridline. The text is
   `hh:mm:ss`, or `hh:mm` for a step of 1 min or more.
   The bottom margin is 28 px, for the lost-probe ticks and the time labels.
-  A tooltip shows the visible sample nearest to the pointer, within 6 px: the hop number,
-  the host text of the row (`displayHost()`), the send time of the probe
-  (`yyyy-MM-dd hh:mm:ss`, local time) and the RTT or `Lost`. The point of a lost probe is
-  the middle of its tick. The lines move each round, thus the graph does not wait for the
-  help event of Qt: it uses mouse tracking and shows the tooltip at once on each pointer
-  move. A filled circle (radius 4 px, the colour of the series, a 1.5 px outline in the
-  window text colour) marks that sample on top of all lines. When the samples change under
-  a pointer that does not move, the graph finds the nearest sample again and updates the
-  tooltip and the circle. When the pointer leaves the graph, the graph hides the tooltip
-  and removes the circle. As with the tooltips of Qt, there is no tooltip while no window
-  of LinMTR is active. A repaint costs CPU and delays the read of replies. The delay does not
-  change an RTT from the kernel (§3.2). It makes the RTT of a TCP reset, or of an answer
-  without a stamp, larger. Thus a pointer move repaints the graph only when the circle moves.
+- Tooltip of both graphs: the tooltip shows the visible sample nearest to the pointer, within
+  6 px. It gives the hop number, the host text of the row (`displayHost()`), the send time
+  of the probe (`yyyy-MM-dd hh:mm:ss`, local time) and the RTT or `Lost`. The point of a lost
+  probe is the middle of its tick. The lines move each round, so the graph does not wait for
+  the help event of Qt. It uses mouse tracking and shows the tooltip at once on each pointer
+  move.
+- Hover marker: a filled circle (radius 4 px, the colour of the series, a 1.5 px outline in
+  the window text colour) marks the sample of the tooltip on top of all lines. When the
+  samples change under a pointer that does not move, the graph finds the nearest sample
+  again and updates the tooltip and the circle. When the pointer leaves the graph, the graph
+  hides the tooltip and removes the circle.
+- Active window: there is no tooltip while no window of LinMTR is active. The route graph
+  also shows one while a Host properties dialog is active. Qt shows its own tooltips only
+  while the window of the widget, or one of its parent windows, is active.
+- Repaint: a repaint costs CPU and delays the read of replies. The delay does not change
+  an RTT from the kernel (§3.2). It makes the RTT of a TCP reset, or of an answer without a
+  stamp, larger. Thus a pointer move repaints the graph only when the circle moves.
 
 ## 5. Report formats (`ReportBuilder`, shared by GUI and CLI)
 
@@ -441,7 +463,16 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
 ## 8. Known deviations from WinMTR
 
 1. Round-based probing (as in mtr) instead of one blocking thread per TTL.
-2. Loss % does not count probes that wait for a reply (upstream briefly counts them as lost).
+2. `Sent` counts a probe when LinMTR sends it (`HopStats::sent`). Thus `Sent` can be larger
+   than `Recv` plus the lost probes. The difference is the probes in flight: about
+   `timeoutSec / intervalSec` for a hop that does not answer (3 at the defaults). At the
+   defaults, such a hop shows loss 0 for the first 3 s, while its `Sent` goes up to 3. Stop
+   ends the trace at once (§2), and its probes in flight stay in `Sent`.
+
+   Upstream counts a probe in `Sent` (`AddXmit()`) only after the blocking `IcmpSendEcho()`
+   returns (`WinMTRNet.cpp:175-179`, `AddReturned()` at `:189`). Thus in upstream, a probe
+   that waits for its reply is in no counter, and Stop waits for the last probes. The loss
+   formula is the same in both, over the probes that got a reply or timed out.
 3. Reply timeout 3 s by default, configurable (upstream: fixed 5 s).
 4. IPv6, UDP and TCP probing (upstream issue #3, with the TCP comment).
 5. Report title `LinMTR statistics`; `\n` line endings.
@@ -459,13 +490,23 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
 12. Host properties is non-modal, updates while the trace runs and shows a graph of the hop
     round-trip times. Upstream shows a static modal snapshot. The dialog also shows `Jitter:`,
     the loss with one decimal and the times with real tenths. Upstream has no jitter, and it
-    shows the integer loss and times of the table (`%.1f` of an integer).
+    shows the integer loss and times of the table (`%.1f` of an integer). The dialog also
+    opens after Stop, on the rows that the table keeps. Upstream `OnDblclkList()` opens it
+    only while the state is `TRACING` (`WinMTRDialog.cpp:442`).
 13. The route graph under the table and the `Show route graph` option are new; upstream has
     no graph.
 14. Ping size: 0 to 8192 bytes (`OptionsDialog.h`; the CLI check and the engine clamp use the
     same range). Upstream checks no range. LinMTR sets no `IP_MTU_DISCOVER` option, so the
     kernel default applies and a probe larger than the path MTU can be fragmented. Upstream
     sets `IPFLAG_DONT_FRAGMENT` on every probe.
+
+    LinMTR also limits the interval (0.1 to 60 s), the LRU size (1 to 1024 hosts), the reply
+    timeout (0.5 to 10 s) and the max hops (1 to 64). `OptionsDialog.h` holds these ranges.
+    The settings loader uses all four, and the CLI check uses all except the LRU size, which
+    has no option. The engine clamp is wider (interval 0.1 to 3600 s, reply timeout 0.1 to
+    60 s, max hops 1 to 255). Upstream reads the interval and the LRU size without a check
+    (`WinMTROptions.cpp:91-98`, `WinMTRMain.cpp:112-123`). It has no reply timeout or max
+    hops option (fixed 5 s and 30).
 15. An ICMP error from the target address makes its hop the target hop, and the probes stop
     there. Upstream sets no address for an ICMP error. Thus, until the target replies,
     upstream probes all 30 TTLs and shows the error on each hop from the target on.
@@ -498,3 +539,7 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
     its target hop again: the thread of each later TTL ends in `TraceThread()` when its TTL
     is above `GetMax()`. mtr also stops there: `net_send_batch()` ends each batch at the first
     hop with the target address.
+20. The first reply of a hop sets `Best`, and each later reply can make it lower. Upstream
+    `SetBest()` (`WinMTRNet.cpp:393`) writes `best` only when `best` is larger than the RTT or
+    when `xmit` is 1, and `best` starts at 0. Thus when the first probe of a hop gets no
+    reply, upstream shows `Best` 0 for the whole trace.

@@ -267,7 +267,7 @@ void TestHopGraphWidget::toolTipAtSample()
 // A flat line at 12 ms (ceiling 20): round 30 is at x 392, y 73.6. The probe
 // pixel is 2 px below the line, inside the marker circle (radius 4) and off
 // the 1 px line, so only the marker can make it red. The tooltip shows only
-// while a window of the application is active, as the tooltips of Qt do.
+// while a window of the application is active.
 void TestHopGraphWidget::hoverMarker()
 {
     const auto flat = [](float ms) {

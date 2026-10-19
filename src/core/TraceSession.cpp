@@ -579,10 +579,7 @@ void TraceSession::Private::onProbeEvent(const ProbeEvent &ev)
         ++hop.timedOut;
         hop.addSample(it->round, -1.0f, it->sentAtMs);
         hop.errorText = ev.errorText;
-        // An ICMP error from a router does not change the hop address, as upstream
-        // (SetName() only). A router can send the error for each TTL up to maxHops.
-        // With its address on these hops, currentMaxTtl() stops the probes at that
-        // router until the trace ends. An error from the target makes this the target hop.
+        // Only the target sets the address: with a router address, the trimming would stop there.
         if (sameAddress(ev.responder, targetAddress))
             updateHopAddress(hop, ev.responder, true);
         break;

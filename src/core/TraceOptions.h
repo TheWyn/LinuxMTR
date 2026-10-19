@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Copyright (C) 2026 Wyn
+
 #pragma once
 
 // Options for one trace. Defaults match WinMTR where it has an equivalent.

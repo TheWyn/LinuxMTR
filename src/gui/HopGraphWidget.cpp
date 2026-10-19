@@ -171,7 +171,7 @@ QString HopGraphWidget::toolTipAt(const QPoint &pos) const
 void HopGraphWidget::updateToolTip()
 {
     m_hit = hitAt(*m_pointer);
-    // Like Qt: no tooltip while another application is active. No tip rect: with
+    // No tooltip while no LinMTR window is active (looser than Qt). No tip rect: with
     // a rect, Qt hides the tip when the pointer leaves it.
     if (m_hit.text.isEmpty() || QApplication::activeWindow() == nullptr)
         QToolTip::hideText();

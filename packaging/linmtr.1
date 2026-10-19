@@ -1,7 +1,7 @@
 .\" Manual page for LinMTR.
 .\" SPDX-License-Identifier: GPL-2.0-only
 .\" Copyright (C) 2026 Wyn
-.TH LINMTR 1 2026-10-11 "LinMTR 0.1.0" "User Commands"
+.TH LINMTR 1 2026-10-19 "LinMTR 0.1.0" "User Commands"
 .SH NAME
 linmtr \- WinMTR\-style traceroute and ping network diagnostic tool
 .SH SYNOPSIS
@@ -119,8 +119,9 @@ holds one object per hop:
 the hop number, the address, the host name, the ICMP error text,
 the loss percentage, the probe counts, a target flag,
 and the best, average, worst and last round\-trip times in milliseconds,
-with 3 decimals.
-A value that is not available is
+with at most 3 decimals.
+The times of a hop without a reply are 0.
+An address, a host name or an error text that is not available is
 .BR null .
 You cannot use this option together with
 .BR \-\-html .
