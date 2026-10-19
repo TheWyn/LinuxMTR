@@ -381,6 +381,7 @@ private slots:
     void sessionSearchCap();
     void sessionSilentRun_data();
     void sessionSilentRun();
+    void sessionLateSearchAnswer();
     void liveLoopbackTrace();
     void liveStalledReadRtt_data();
     void liveStalledReadRtt();
@@ -885,6 +886,7 @@ void TestCoreParsers::sessionLateAnswer_data()
     QTest::newRow("reply: stamp before the timeout") << false << false << 0u << 100 << true;
     QTest::newRow("reply: stamp after the timeout") << false << false << 0u << 110 << false;
     QTest::newRow("reply: no kernel value") << false << false << 0u << 0 << true;
+    QTest::newRow("untagged reply: stamp before the timeout") << false << true << 0u << 100 << true;
     QTest::newRow("untagged reply: stamp after the timeout") << false << true << 0u << 110 << false;
     QTest::newRow("error: stamp before the timeout") << true << false << 0u << 100 << true;
     QTest::newRow("error: stamp after the timeout") << true << false << 0u << 110 << false;
@@ -1550,6 +1552,41 @@ void TestCoreParsers::sessionSilentRun()
     QTRY_VERIFY_WITH_TIMEOUT(sent > script.size() + 1 || !errors.isEmpty(), 15000);
     QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
     QCOMPARE(past > 0, probesPast);
+    QCOMPARE(session.hops().size(), 1);
+    session.stop();
+}
+
+// The target answers hop 1 once. Then hop 1 sends no answer, so hop 2 gets a
+// search probe in each round after 10 timeouts. The target answers each search
+// probe late: its kernel value is the reply timeout. A late answer to a search
+// probe is no target answer, so the end of the table stays at hop 1.
+void TestCoreParsers::sessionLateSearchAnswer()
+{
+    bool answered = false;
+    int searchProbes = 0;
+    const auto answer = [&](int ttl) -> FakeAnswer {
+        if (ttl == 1) {
+            if (answered)
+                return 0;
+            answered = true;
+            return targetReply();
+        }
+        ++searchProbes;
+        ProbeEvent ev = targetReply();
+        ev.rttUs = quint32(kTimeoutNs / 1000);
+        return ev;
+    };
+    linmtr::core::setBackendFactoryForTests(
+        [&answer] { return std::make_unique<FakeBackend>(answer, kTimeoutNs); });
+    const auto restore = qScopeGuard([] { linmtr::core::setBackendFactoryForTests({}); });
+
+    TraceOptions options = fakeOptions(0.1, 2);
+    options.timeoutSec = kTimeoutNs / 1e9;
+    TraceSession session;
+    QSignalSpy errors(&session, &TraceSession::errorOccurred);
+    session.start(kFakeTarget.toString(), options);
+    QTRY_VERIFY_WITH_TIMEOUT(searchProbes > kSearchAnswers + 5 || !errors.isEmpty(), 15000);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
     QCOMPARE(session.hops().size(), 1);
     session.stop();
 }

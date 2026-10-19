@@ -327,6 +327,12 @@ void TestHopGraphWidget::hoverMarker()
     QApplication::sendEvent(&graph, &moveNearby);
     QTest::qWait(50);
     QCOMPARE(graph.paints, paints);
+    // A move onto the sample of the previous round moves the marker.
+    const QPoint previous = pointer - QPoint(3, 0);
+    QMouseEvent movePrevious(QEvent::MouseMove, QPointF(previous), graph.mapToGlobal(QPointF(previous)),
+                             Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&graph, &movePrevious);
+    QTRY_VERIFY(graph.paints > paints);
 }
 
 void TestHopGraphWidget::labelStepMs_data()
