@@ -53,14 +53,10 @@ ErrQueueRead readErrQueue(int fd, ErrQueueInfo *info, qint64 *arrivalNs)
     return ErrQueueRead::Empty;
 }
 
-// True when the kernel resent the SYN. It resends an unanswered SYN after its
-// initial RTO (1 s). A later answer can belong to the resend, and its RTT is
-// then wrong by whole seconds (Karn's rule). Nothing answered the probe that the
-// session sent, so it counts as lost, as an ICMP or UDP probe does. This applies
-// to every reply: handshake, RST, time exceeded and port unreachable.
-// *rttUs gets tcpi_rtt: the RTT in microseconds that the kernel measured from the
-// SYN to the SYN-ACK, or 0 without a handshake (RST, ICMP answer). A late read does
-// not change it. When TCP_INFO fails, *rttUs does not change.
+// True when the kernel resent the SYN: a later answer of any kind can belong to the
+// resend, so the probe counts as lost (Karn's rule, DESIGN.md §3.4). *rttUs gets
+// tcpi_rtt (SYN to SYN-ACK, in microseconds; 0 without a handshake). When TCP_INFO
+// fails, *rttUs does not change.
 bool synRetransmitted(int fd, quint32 *rttUs)
 {
     tcp_info info{};
@@ -146,10 +142,8 @@ int TcpProber::open()
         return EAFNOSUPPORT;
     }
 
-    // send() makes one socket per probe. Make one now, so that a missing
-    // permission stops the trace at once and does not fail every probe. Keep it
-    // open: the kernel turns the arrival stamps on with a delay, and off when the
-    // last socket that uses them closes. This socket keeps them on for the probes.
+    // One probe socket now, so that a missing permission stops the trace at once.
+    // It stays open to keep the kernel arrival stamps on (DESIGN.md §3.4).
     if (const int err = newSocket(&m_stampKeeper); err != 0)
         return err;
     m_open = true;
@@ -255,9 +249,8 @@ bool TcpProber::inspect(Probe &probe, short revents, ProbeEvent *ev)
             ev->responder = info.offender;
             ev->arrivalNs = arrivalNs;
             if (verdict.portUnreachable) {
-                // A REJECT firewall at or in front of the destination answered
-                // for it: target reached, as in UDP mode and mtr --tcp. The
-                // offender stays the hop address (it can be the firewall).
+                // A REJECT firewall answered for the destination: target reached.
+                // The offender stays the hop address (it can be the firewall).
                 ev->kind = ProbeEvent::Kind::Reply;
                 ev->reachedTarget = true;
             } else {

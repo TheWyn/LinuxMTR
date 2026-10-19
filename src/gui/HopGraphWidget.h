@@ -13,15 +13,11 @@
 
 #include "core/HopStats.h"
 
-// Line graph of round-trip times over probe rounds, one line per series. A lost
-// probe is a short tick below the zero line. The X axis is a window of the
-// newest rounds, one round for each 3 px of plot width (at least 2, at most
-// HopStats::kHistoryRounds); older rounds leave at the left edge. Time labels
-// under the axis mark local-time multiples of a step. The step comes from the
-// send times, so that the labels do not overlap. Each label has a vertical
-// gridline. While the pointer is in the widget, the tooltip of toolTipAt()
-// shows at once and a circle marks its sample, also when the lines move. There
-// is no tooltip while no window of the application is active.
+// Line graph of round-trip times over probe rounds, one line per series; a lost
+// probe is a tick below the zero line. The X axis is a window of the newest rounds,
+// with time labels from the send times (DESIGN.md §4). While the pointer is in the
+// widget, the tooltip of toolTipAt() shows at once and a circle marks its sample.
+// There is no tooltip while no window of the application is active.
 class HopGraphWidget : public QWidget
 {
     Q_OBJECT

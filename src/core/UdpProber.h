@@ -8,17 +8,10 @@
 namespace linmtr::core {
 
 // Unprivileged UDP probes (tracepath method). Every answer arrives through the
-// IP_RECVERR error queue. An ICMP port unreachable means that the probe reached
-// the target host.
-//
-// Routers can quote only the first 8 bytes after the IP header (the UDP header).
-// Thus the destination port (one port per TTL) and the socket that the answer
-// arrived on identify the pending probe. The session spreads rounds over
-// socketCount sockets, each with its own ephemeral source port. It never puts a
-// second probe of the same TTL in flight on one socket (matchesByPort()), so
-// this match is exact for an answer within the reply timeout (DESIGN.md §3.1).
-// When the quote includes the payload tag, handleError() uses the exact
-// sequence number.
+// IP_RECVERR error queue; a port unreachable means that the probe reached the
+// target. A quoted payload tag gives the seq. Without it, the destination port
+// (one per TTL) and the socket (one per round slot) identify the probe
+// (matchesByPort(), DESIGN.md §3.1).
 class UdpProber final : public Prober
 {
 public:

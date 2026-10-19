@@ -28,7 +28,7 @@ OptionsDialog::OptionsDialog(const TraceOptions &options, int maxLru, bool showI
 {
     setWindowTitle(tr("Options"));
 
-    // About box: replaces the upstream advert and "License and Credits" dialog.
+    // About box (DESIGN.md §8 item 6).
     auto *aboutBox = new QGroupBox(this);
     auto *aboutLayout = new QHBoxLayout(aboutBox);
     const QIcon icon = QApplication::windowIcon();
@@ -68,7 +68,7 @@ OptionsDialog::OptionsDialog(const TraceOptions &options, int maxLru, bool showI
     m_resolveNames = new QCheckBox(tr("Resolve names"), mainBox);
     m_resolveNames->setChecked(options.resolveNames);
 
-    // Upstream issue #4: "one.one.one.one (1.1.1.1)".
+    // Shows the name and the address: "one.one.one.one (1.1.1.1)".
     m_showIps = new QCheckBox(tr("Show IP next to hostname"), mainBox);
     m_showIps->setChecked(showIps);
 

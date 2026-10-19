@@ -24,14 +24,14 @@ public:
     static constexpr int kPingSizeMax = 8192;       // bytes
     static constexpr int kMaxLruMin = 1;            // hosts
     static constexpr int kMaxLruMax = 1024;         // hosts
-    static constexpr int kDefaultMaxLru = 128;      // hosts (WinMTR default)
+    static constexpr int kDefaultMaxLru = 128;      // hosts
     static constexpr double kTimeoutMin = 0.5;      // seconds
     static constexpr double kTimeoutMax = 10.0;     // seconds
     static constexpr int kMaxHopsMin = 1;           // TTL
     static constexpr int kMaxHopsMax = 64;          // TTL
     static constexpr int kTcpPortMin = 1;
     static constexpr int kTcpPortMax = 65535;
-    static constexpr bool kDefaultShowIps = true;   // upstream issue #4
+    static constexpr bool kDefaultShowIps = true;
 
     OptionsDialog(const TraceOptions &options, int maxLru, bool showIps, bool showGraph,
                   QWidget *parent = nullptr);

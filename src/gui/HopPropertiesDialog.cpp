@@ -43,10 +43,8 @@ QString pingText(double ms)
     return QString::number(ms > 0.0 ? ms : 0.0, 'f', 1);
 }
 
-// Returns the loss of the hop in percent, with one decimal. It applies the
-// formula of HopStats::lossPercent() to tenths of a percent, so it rounds up.
-// Thus the table shows this value rounded up to an integer. A hop with a reply
-// shows at most 99.9 (the table shows 100 for 1 reply of 2001 probes).
+// The loss in percent with one decimal: the lossPercent() formula in tenths, so it
+// also rounds up. With a reply, at most 99.9 (DESIGN.md §4).
 QString lossText(const HopStats &hop)
 {
     const quint64 done = hop.received + hop.timedOut;
@@ -138,9 +136,7 @@ void HopPropertiesDialog::refresh()
         return;
     const HopStats &hop = *it;
 
-    // A hop without an address shows an empty name and IP, and the display text
-    // as comment. A responding hop shows its name and IP, and "Host alive." or
-    // its ICMP error text as comment. Both cases deviate from upstream on purpose.
+    // Both cases deviate from upstream on purpose (DESIGN.md §8 item 9).
     QString name;
     QString ip;
     QString comment;

@@ -62,8 +62,8 @@ private:
 inline constexpr int kUdpBasePort = 33434;
 // Largest TTL that a probe can carry, in hops: the limit of the 8-bit IP field.
 inline constexpr int kMaxTtl = 255;
-// Largest socket pool of one Prober (UDP round slots). 128 covers all GUI and
-// CLI option values: ceil(10 s timeout / 0.1 s interval) + 2 = 102.
+// Largest socket pool of one Prober (UDP round slots). It covers all GUI and CLI
+// option values (DESIGN.md §3.1).
 inline constexpr int kMaxProberSockets = 128;
 
 // One decoded answer from the socket, matched to a pending probe by the session.
@@ -171,12 +171,10 @@ public:
         return true;
     }
 
-    // True when an answer can arrive without the seq of the probe. The session
-    // then matches it by TTL and socket only (UDP: routers that quote only the
-    // UDP header). Such a match is exact only for an answer within the reply
-    // timeout. It also needs at most one probe per TTL in flight on each socket.
-    // Thus the session never sends a probe on a socket that still has one
-    // pending for the same TTL.
+    // True when an answer can arrive without the seq of the probe (UDP: routers
+    // that quote only the UDP header). The session then matches it by TTL and
+    // socket. Thus it never sends a probe on a socket that still has one pending
+    // for the same TTL (DESIGN.md §3.1).
     virtual bool matchesByPort() const { return false; }
 
     // The reply timeout of the probe expired and the session stopped waiting.

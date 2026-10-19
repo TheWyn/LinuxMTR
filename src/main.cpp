@@ -36,13 +36,11 @@ void printError(const QString &message)
     std::fflush(stderr);
 }
 
-// Selects the application class before any Q*Application exists. Report mode,
-// --help and --version must work without a display. --help-all needs a
-// QApplication, because Qt lists the generic options of the application class
-// that exists (-platform, -style). *helpAll tells main() to make one on the
-// offscreen platform. *noDisplay is true when a QCoreApplication is necessary
-// only because no display is available: a QApplication then aborts before the
-// parser can show an error. Returns true when a QCoreApplication is sufficient.
+// Selects the application class before any Q*Application exists (DESIGN.md §6).
+// Returns true when a QCoreApplication is sufficient. *helpAll tells main() to make
+// a QApplication on the offscreen platform. *noDisplay is true when a
+// QCoreApplication is necessary only because no display is available: a
+// QApplication then aborts before the parser can show an error.
 bool needsCoreApplication(int argc, char **argv, bool *reportMode, bool *helpAll,
                           bool *noDisplay)
 {

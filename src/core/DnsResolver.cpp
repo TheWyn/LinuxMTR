@@ -11,10 +11,9 @@ namespace linmtr::core {
 
 namespace {
 
-// PTR records are attacker-controlled. Accept only plausible host names, so
-// that no markup, control characters or huge strings reach the display or the
-// HTML report. For any other name, the display shows the numeric address.
-// 253 characters is the longest valid DNS name.
+// PTR records are attacker-controlled: accept only plausible host names, so that
+// no markup, control characters or huge strings reach the display or the HTML
+// report. 253 characters is the longest valid DNS name.
 QString sanitizeHostName(const QString &name, const QString &addressKey)
 {
     if (name.isEmpty() || name.size() > 253 || name == addressKey)

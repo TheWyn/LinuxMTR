@@ -35,7 +35,7 @@ public:
     static QString html(const QList<HopStats> &hops, bool resolveNames, bool showIps);
 
     // LinMTR JSON report (DESIGN.md section 5), indented, keys in alphabetical
-    // order, ends with one newline. Times are milliseconds with 3 decimals.
+    // order, ends with one newline. Times are milliseconds rounded to 3 decimals.
     static QString json(const QList<HopStats> &hops, const JsonInfo &info);
 
     // Integer milliseconds as WinMTR shows them (sprintf "%d" of an int ms).

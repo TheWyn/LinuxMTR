@@ -158,12 +158,10 @@ void verifyUntouched(const ErrQueueInfo &info)
 // errno is a failed send.
 using FakeAnswer = std::variant<ProbeEvent, int>;
 
-// Answers each probe with the result that answer() gives for its TTL. The session
-// reads an answer at the first pump tick at least holdNs after the send. An answer
-// that sets its TTL gets no seq. The session then matches it by TTL and socket, as
-// an answer that quotes only the UDP header. A cap above 0 is the most probes in
-// flight, as for the TCP prober. A probe stays in flight until the session reads
-// its answer or discards it.
+// Answers each probe with answer(ttl), ready holdNs after the send. An answer that
+// sets its TTL gets no seq (a port-only match). A cap above 0 is the most probes in
+// flight, as for the TCP prober. A probe is in flight until the session reads its
+// answer or discards it.
 class FakeBackend : public linmtr::core::ProbeBackend
 {
 public:
@@ -230,9 +228,7 @@ private:
     qsizetype m_mostInFlight = 0;
 };
 
-// The values of the silent target hop rule (DESIGN.md §3.3): the timeouts in a
-// row that make a target hop silent, and the target answers to the search probes
-// of one later hop that move the end of the table.
+// The values of the silent target hop rule (DESIGN.md §3.3).
 constexpr int kSilentRun = 10;
 constexpr int kSearchAnswers = 20;
 
@@ -293,10 +289,8 @@ QString loopbackPingUnavailable()
 }
 
 // Opens a UDP socket with SO_TIMESTAMPNS on 127.0.0.1 into *hold and waits until
-// the kernel stamps its datagrams when they arrive. The kernel turns the stamps
-// on with a delay after the first socket asks for them. Until then, recvmsg()
-// gives the read time as the stamp. Keep *hold open during the test, so that the
-// stamps stay on. Returns an empty string, else the reason.
+// the kernel stamps arrivals (it turns the stamps on with a delay). Keep *hold open
+// during the test, so that the stamps stay on. Returns an empty string, else the reason.
 QString arrivalStampsUnavailable(UniqueFd *hold)
 {
     hold->reset(::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0));
@@ -801,13 +795,8 @@ void TestCoreParsers::sessionIcmpError_data()
     QTest::newRow("error from the target") << QStringLiteral("192.0.2.9") << 3;
 }
 
-// Hops 1 and 2 are the routers 192.0.2.1 and 192.0.2.2, and the target
-// 192.0.2.9 is at hop 3. While the target is down, the sender answers each TTL
-// from 3 to maxHops with "Destination host unreachable.". An error from a router
-// gives no hop address. Else all later hops get the address of router 2, and the
-// probes stop at TTL 2 until the trace ends. An error from the target makes hop 3
-// the target hop. When the target is up again, hop 3 is the target hop in both cases.
-// An error after that does not change the target hop.
+// Routers at hops 1 and 2, the target at hop 3. Three phases: the target down (the
+// sender answers each TTL from 3 with an ICMP error), up, and down again.
 void TestCoreParsers::sessionIcmpError()
 {
     QFETCH(QString, sender);
@@ -872,9 +861,8 @@ void TestCoreParsers::sessionIcmpError()
 void TestCoreParsers::sessionLateAnswer_data()
 {
     // error: an ICMP error from a router, else a reply from the target. untagged:
-    // the answer has no seq, so the session matches it by TTL and socket. rttUs:
-    // its tcpi_rtt. stampMs: its arrival stamp, in ms after the send (0 = none).
-    // counted: the answer counts; else the probe times out.
+    // the answer has no seq. rttUs: its tcpi_rtt. stampMs: its arrival stamp, in ms
+    // after the send (0 = none). counted: the answer counts; else the probe times out.
     QTest::addColumn<bool>("error");
     QTest::addColumn<bool>("untagged");
     QTest::addColumn<uint>("rttUs");
@@ -892,11 +880,8 @@ void TestCoreParsers::sessionLateAnswer_data()
     QTest::newRow("error: stamp after the timeout") << true << false << 0u << 110 << false;
 }
 
-// The reply timeout is 110 ms, and the fake backend holds the answer for 110 ms.
-// Thus the session reads it after the timeout, at the pump tick that also expires
-// the probe. Each tick reads the answers before it looks for expired probes. An
-// answer whose kernel value shows that it arrived after the timeout does not count,
-// also without a seq: the probe times out. An answer without a kernel value counts.
+// The fake holds each answer for the reply timeout, so the session reads it in the
+// pump tick that expires the probe, before the sweep.
 void TestCoreParsers::sessionLateAnswer()
 {
     QFETCH(bool, error);
@@ -960,12 +945,9 @@ void TestCoreParsers::sessionLateAnswer()
     session.stop();
 }
 
-// The target answers TTL 1 with the RTTs 1, 4, 3 and 7 ms, as the kernel value of
-// a TCP handshake. A lost probe and an ICMP error come between them. The jitter is
-// the mean of the differences between consecutive replies: (3 + 1 + 4) / 3.
-// replyRttNs() takes the RTT at the read when the session reads an answer sooner
-// than its RTT after the send. An example is the answer to a probe that a late pump
-// tick sent. Thus the test takes the expected RTTs from the history.
+// The target answers with the tcpi_rtt values 1, 4, 3 and 7 ms, and a lost probe and
+// an ICMP error between them. The expected RTTs come from the history: an answer that
+// the session reads sooner than its RTT (a late pump tick) gets the RTT at the read.
 void TestCoreParsers::sessionJitter()
 {
     const QHostAddress target(QStringLiteral("192.0.2.9"));
@@ -1021,11 +1003,9 @@ void TestCoreParsers::sessionJitter()
 
 void TestCoreParsers::sessionPathLonger_data()
 {
-    // silentHops: the hops without an answer before the new target hop. The
-    // target answers with an echo reply, with a time exceeded from its address
-    // (reachedTarget false), or with an ICMP error. On the longer path, its answers
-    // come from the responder address. Another address sends a reply that reaches
-    // the target, as an anycast target does.
+    // silentHops: the hops without an answer before the new target hop. reachedTarget
+    // false: a time exceeded from the target address. targetErrors: ICMP errors from
+    // the target. responder: the address of the answers on the longer path (anycast).
     QTest::addColumn<int>("silentHops");
     QTest::addColumn<bool>("reachedTarget");
     QTest::addColumn<bool>("targetErrors");
@@ -1039,20 +1019,11 @@ void TestCoreParsers::sessionPathLonger_data()
         << 2 << true << false << QStringLiteral("192.0.2.10");
 }
 
-// Hops 1 to 3 are routers, and only the probe for the target hop gets an answer of
-// the target. First the target is at hop 3 + silentHops, then at hop 4, the end of
-// the table. Thus with two silent hops, hop 5 keeps the target address of the
-// older path, and hop 6 has no address. Then the path gets longer: the target
-// moves to hop 4 + silentHops, the last hop, and the hops from 4 to it send no
-// answer. After 10 timeouts in a row at hop 4, each round also sends search probes
-// to the hops after it. The target answers exactly 20 of them, then no more
-// probes. The 20th answer makes its hop the end of the table. The 10th timeout of
-// hop 5 comes before the 20th answer: only the run of the end hop starts the count
-// again. Hop 4 keeps the target address. Each answer from the target address
-// counts, also an ICMP error. A reply that reaches the target also counts, from
-// any address. Then the path gets shorter again: hop 4 answers, and the table ends
-// at hop 4 again at once. The network changes only when a round starts (the probe
-// for hop 1).
+// Routers at hops 1 to 3. The target moves from hop 3 + silentHops to hop 4, then
+// behind silent hops to hop 4 + silentHops. There it answers exactly 20 search probes,
+// then it moves back to hop 4. With two silent hops, hop 5 keeps the target address
+// of the first path, and its 10th timeout comes before the 20th answer. The network
+// changes only when a round starts (the probe for hop 1).
 void TestCoreParsers::sessionPathLonger()
 {
     QFETCH(int, silentHops);
@@ -1114,13 +1085,10 @@ void TestCoreParsers::sessionPathLonger()
     session.stop();
 }
 
-// Hops 1 to 3 are routers, and the target is at hop 4. Then the path gets longer
-// behind hops 4 and 5, which send no answer. The target answers every second probe
-// at hop 6 (the 2nd, the 4th and so on) and every probe at hops 7 and 8. Hop 7
-// gets 20 answers first, but the end of the table becomes hop 6: the first target
-// hop after the silent target hop, because hop 6 is not silent. Hop 6 answers in
-// the round of the move. Thus a wrong end at hop 7 stays until the round after the
-// next one, and the fake sees it when that round starts.
+// The target moves from hop 4 to behind the silent hops 4 and 5. It answers every
+// second probe at hop 6 and every probe at hops 7 and 8: hop 7 gets 20 answers first,
+// but the end must become hop 6. Hop 6 answers in the round of the move. Thus a wrong
+// end at hop 7 lasts until a round start, where the fake reads the table.
 void TestCoreParsers::sessionFirstLiveTargetHop()
 {
     TraceSession session;
@@ -1171,15 +1139,9 @@ void TestCoreParsers::sessionSearchAnswers_data()
     QTest::newRow("local errors") << ProbeEvent::Kind::Lost << QList<int>{kSearchAnswers};
 }
 
-// Hops 1 to 3 are routers, and the target is at hop 4, the end of the table. For
-// some periods, the path changes: hop 4 sends no answer, a router answers at hop
-// 5, and hop 6 answers. With target replies, hop 6 answers 19 search probes in the
-// first silent period of hop 4, and 2 in the second. Router answers do not count,
-// and the count starts again with each silent period of hop 4. An ICMP error from
-// a router and a local error are not answers of the target. Thus the end of the
-// table stays at hop 4. After each period, hop 4 answers again. The network
-// changes only when a round starts (the probe for hop 1), and the fake reads the
-// table then.
+// The target at hop 4 goes silent for some periods, while router 5 replies and hop 6
+// answers. No period has 20 target answers at hop 6, so the end stays at hop 4. The
+// network changes, and the fake reads the table, when a round starts.
 void TestCoreParsers::sessionSearchAnswers()
 {
     QFETCH(ProbeEvent::Kind, kind);
@@ -1250,15 +1212,11 @@ void TestCoreParsers::sessionTargetOutage_data()
     QTest::newRow("hops past the target from round 1") << 2 << 2 << true;
 }
 
-// The hops after the target hop keep target answers from an older path, or from
-// round 1 (round 1 can probe hops 3 and 4 before the answer of hop 2 arrives). Then
-// the target sends no answer. After 10 timeouts in a row, each round also sends
-// search probes to the hops after the target hop. The send of the first search
-// probe to the next hop fails. No search probe gets an answer, so the table keeps
-// its end. When the target answers again, the search probes stop. Then the path
-// gets longer, and a router answers at the old target hop: the next hop, which the
-// search probes reached, shows none of them. The network changes only when a round
-// starts (the probe for hop 1), and the fake reads the table then.
+// The hops past the target hop keep target answers from an older path or from round 1.
+// Round 1 can probe hops 3 and 4 before hop 2 answers. The target goes down: no search
+// probe gets an answer (the first send fails), and the end stays. The target comes
+// back, then the path gets one hop longer: the new end shows none of the search probes.
+// The network changes, and the fake reads the table, when a round starts.
 void TestCoreParsers::sessionTargetOutage()
 {
     QFETCH(int, oldTargetTtl);
@@ -1333,13 +1291,10 @@ void TestCoreParsers::sessionTargetOutage()
     session.stop();
 }
 
-// The target at hop 3 limits its answers as Linux limits its ICMP errors to each
-// source. It sends 6 at once, then 1 for each interval of the trace (1 s in Linux).
-// The target goes down, and the search probes go to hops 4 to 12. Then the target
-// comes back after the probe of hop 3 and before the search probes of that round.
-// The search probes take the 6 answers. The probe of hop 3 is the first probe of
-// each round that reaches the target, so it gets the next answer. Thus the end of
-// the table stays at hop 3. The fake reads the table at each round start.
+// The target at hop 3 limits its answers as Linux limits its ICMP errors (6 at once,
+// then 1 per interval). It goes down, then comes back after the probe of hop 3 and
+// before the search probes of that round, which take the 6 answers. The end must stay
+// at hop 3. The fake reads the table at each round start.
 void TestCoreParsers::sessionRateLimitedTarget()
 {
     // A model of inet_peer_xrlim_allow(): the bucket fills with the time, in ms, and
@@ -1403,15 +1358,10 @@ void TestCoreParsers::sessionRateLimitedTarget()
     session.stop();
 }
 
-// The fake takes at most 256 probes in flight, as the TCP prober. Hops 1 to 5 are
-// routers, and the target at hop 6 stops answering. With a reply timeout of 3 s,
-// the search probes of 30 rounds would be in flight: more than the fake takes. A
-// search probe leaves room for each counted probe that can wait at once: 31 for
-// each hop of the table, less the counted probes in flight. Thus the session skips
-// no probe that counts and emits no capacity notice, also when hops 2 to 5 then
-// stop answering too. About 150 counted probes then wait: the test fails for a
-// room of 24 or fewer probes for each hop, and a stall of the host cannot push the
-// probes to the cap. The + 1 of the 31 (tick jitter) is out of its reach.
+// The fake takes at most 256 probes in flight, as the TCP prober. The target at hop 6
+// stops answering, then hops 2 to 5 too. The session must skip no counted probe and
+// emit no capacity notice. A stall of the host cannot push the probes to the cap.
+// The + 1 of kPerTtl (tick jitter) is out of reach of the test.
 void TestCoreParsers::sessionSearchCap()
 {
     static constexpr int kCap = 256;
@@ -1497,15 +1447,10 @@ void TestCoreParsers::sessionSilentRun_data()
     QTest::newRow("10 timeouts at a router") << QByteArray("rTTTTTTTTTT") << false;
 }
 
-// Hop 1 is the end of the table. A search probe to hop 2 goes in the pump tick of
-// the probe of hop 1, after it. Thus hop 2 gets a probe in each round that starts
-// while hop 1 has 10 or more timeouts in a row. An answer, an ICMP error or a local
-// error ends the run. A failed send does not change it, and a late reply is a
-// timeout. Only a silent target hop starts the search. Hop 2 answers with the
-// address of router 1, so the trimming also ends the table at hop 1 when hop 1 is a
-// router. The fake holds each answer until the reply timeout. Thus the session
-// reads it in the pump tick that expires its probe, before the sweep. Each probe
-// resolves before the next round starts.
+// Hop 2 gets a search probe in each round that starts while hop 1, the end, is a
+// silent target hop. Hop 2 answers with the address of router 1, so the trimming
+// also ends the table at hop 1 for a router. The fake holds each answer until the
+// reply timeout, and each probe resolves before the next round starts.
 void TestCoreParsers::sessionSilentRun()
 {
     QFETCH(QByteArray, script);
@@ -1561,10 +1506,8 @@ void TestCoreParsers::sessionSilentRun()
     session.stop();
 }
 
-// The target answers hop 1 once. Then hop 1 sends no answer, so hop 2 gets a
-// search probe in each round after 10 timeouts. The target answers each search
-// probe late: its kernel value is the reply timeout. A late answer to a search
-// probe is no target answer, so the end of the table stays at hop 1.
+// After one target answer, hop 1 is silent, and the target answers each search probe
+// to hop 2 at the reply timeout (late): the end must stay at hop 1.
 void TestCoreParsers::sessionLateSearchAnswer()
 {
     bool answered = false;
@@ -1655,11 +1598,10 @@ void TestCoreParsers::liveStalledReadRtt_data()
     QTest::newRow("tcp reset: read time") << P::Tcp << false << false;
 }
 
-// The answer waits in the socket while the thread is busy (for example, a
-// repaint). An RTT from the kernel does not include the wait. A TCP reset has
-// no kernel value: its RTT ends at the read, so it includes the wait.
-// Not covered: the stamps of TCP probes and of the UDP sockets after slot 0.
-// Loopback sends no ICMP error to a TCP SYN, and round 1 uses slot 0.
+// The answer waits in the socket while the thread sleeps: a kernel RTT excludes the
+// wait, the RTT of a TCP reset includes it. Not covered: the stamps of the TCP error
+// queue, because loopback sends no ICMP error to a SYN. Also not covered: the stamps of
+// the UDP sockets after slot 0, because one round uses slot 0 only.
 void TestCoreParsers::liveStalledReadRtt()
 {
     QFETCH(TraceOptions::Protocol, protocol);
@@ -1670,10 +1612,8 @@ void TestCoreParsers::liveStalledReadRtt()
         if (const QString reason = loopbackPingUnavailable(); !reason.isEmpty())
             QSKIP(qPrintable(reason));
     }
-    // UDP: the probe for TTL 1 goes to 127.0.0.1:33434. A socket that receives on
-    // that port takes the probe, and no port unreachable comes back. This socket
-    // holds the port, so that the other sockets of the test cannot get it. Its
-    // connect() makes it take only datagrams from port 9, thus not the probe.
+    // UDP: hold port 33434, so that no other socket of the test takes the probe. Its
+    // connect() to port 9 keeps the probe out of it, so a port unreachable comes back.
     UniqueFd portHold;
     if (protocol == TraceOptions::Protocol::Udp) {
         portHold.reset(::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0));

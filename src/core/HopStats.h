@@ -24,8 +24,7 @@ struct HopStats
                                  // target (other ICMP errors keep it); isNull() until the
                                  // first such answer
     QString hostname;            // reverse-DNS result; empty until resolved
-    QString errorText;           // text of the latest ICMP error (WinMTR's, or LinMTR's for
-                                 // a code without one); the next reply clears it.
+    QString errorText;           // text of the latest ICMP error; the next reply clears it.
                                  // displayHost() shows it first
     quint64 sent = 0;            // probes sent, including those still in flight; search
                                  // probes do not count (DESIGN.md §3.3)
@@ -57,9 +56,8 @@ struct HopStats
             history.removeFirst();
     }
 
-    // WinMTR integer formula (100 - 100*recv/sent) over resolved probes only
-    // (received + timedOut), so that a probe in flight never shows as loss.
-    // 0 before the first probe resolves.
+    // The WinMTR integer formula over resolved probes only, so that a probe in
+    // flight never shows as loss.
     int lossPercent() const
     {
         const quint64 done = received + timedOut;
@@ -71,10 +69,9 @@ struct HopStats
         return received == 0 ? 0.0 : totalMs / static_cast<double>(received);
     }
 
-    // Jitter: the mean of |RTT - RTT of the previous reply| over all replies
-    // after the first. The previous reply is the reply that the session read
-    // before it, as for lastMs. Lost probes and ICMP errors have no RTT and do
-    // not count. 0 with fewer than two replies.
+    // The mean of |RTT - RTT of the previous reply| over all replies after the
+    // first. The order is the order in which the session read them, as for lastMs.
+    // Lost probes and ICMP errors do not count.
     double jitterMs() const
     {
         return received < 2 ? 0.0 : jitterTotalMs / static_cast<double>(received - 1);
@@ -82,8 +79,8 @@ struct HopStats
 
     // Display rule for the table, the reports and the properties dialog. Order:
     // errorText, the host name (when resolveNames), the address,
-    // "No response from host". showIps appends the address to a resolved name
-    // (upstream issue #4): "one.one.one.one (1.1.1.1)".
+    // "No response from host". showIps appends the address to a resolved name:
+    // "one.one.one.one (1.1.1.1)".
     QString displayHost(bool resolveNames, bool showIps = false) const
     {
         if (!errorText.isEmpty())

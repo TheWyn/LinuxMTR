@@ -44,7 +44,7 @@ public:
     bool resolveNames() const { return m_resolveNames; }
     void setResolveNames(bool resolve);
 
-    // True: the Hostname column appends the address to resolved names (upstream issue #4).
+    // True: the Hostname column appends the address to resolved names.
     bool showIps() const { return m_showIps; }
     void setShowIps(bool show);
 

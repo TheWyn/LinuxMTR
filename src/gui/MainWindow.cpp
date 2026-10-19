@@ -196,8 +196,7 @@ void MainWindow::buildUi()
 
     m_model = new HopTableModel(this);
     m_splitter = new QSplitter(Qt::Vertical, central);
-    // A saved state can hold 0 for a graph that was never laid out; a
-    // collapsible graph would then stay at height 0 when the option is on.
+    // Not collapsible: a saved state can hold 0 for a graph that was never laid out.
     m_splitter->setChildrenCollapsible(false);
     m_table = new QTableView(m_splitter);
     m_table->setModel(m_model);
@@ -219,8 +218,7 @@ void MainWindow::buildUi()
         header->resizeSection(c, HopTableModel::defaultColumnWidth(c));
     header->setSectionResizeMode(HopTableModel::ColHostname, QHeaderView::Stretch);
 
-    // Hop copy actions (upstream issue #10). The shortcut applies only to the
-    // table, so Ctrl+C in the host box still copies the typed text.
+    // The shortcut applies only to the table, so Ctrl+C in the host box copies text.
     m_copyHostAction = new QAction(tr("Copy hostname"), m_table);
     m_copyHostAction->setShortcut(QKeySequence::Copy);
     m_copyHostAction->setShortcutContext(Qt::WidgetShortcut);
@@ -460,8 +458,8 @@ void MainWindow::beginTrace(const QString &host)
     }
 
     m_hostCombo->setEditText(host);
-    // Upstream adds the host to the history only after it resolved
-    // (OnRestart: InitMTRNet()), so a typo never enters it: see onStateChanged().
+    // onStateChanged() adds the host to the history after it resolves (upstream
+    // OnRestart: InitMTRNet()), so that a typo never enters it.
     m_pendingLruHost = host;
     m_model->clear();
     m_errorShown = false;

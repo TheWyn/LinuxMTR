@@ -131,10 +131,9 @@ void UdpProber::handleError(const ErrQueueInfo &info,
         break;
     case IcmpVerdict::Kind::Unreachable:
         ev.responder = info.offender;
-        // Routers never answer transit traffic with port unreachable: only the
-        // host where the probe ends sends it. Anycast and multi-homed targets
-        // often send it from another of their addresses. Thus do not require
-        // offender == target (the same rule as traceroute, tracepath and mtr).
+        // Only the host where the probe ends sends a port unreachable, often from
+        // another of its addresses (anycast, multi-homed), so the offender can differ.
+        // The same rule is in traceroute, tracepath and mtr.
         if (verdict.portUnreachable) {
             ev.kind = ProbeEvent::Kind::Reply;
             ev.reachedTarget = true;

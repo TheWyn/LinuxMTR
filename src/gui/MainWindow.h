@@ -77,7 +77,7 @@ private:
     void onRowDoubleClicked(const QModelIndex &index);
     void onTableContextMenu(const QPoint &pos);
 
-    // Hop copy actions (upstream issue #10); they act on the selected row.
+    // Hop copy actions; they act on the selected row.
     int selectedHopRow() const;
     void copySelectedHost();
     void copySelectedAddress();

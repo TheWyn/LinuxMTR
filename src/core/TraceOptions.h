@@ -9,8 +9,8 @@ struct TraceOptions
     enum class Protocol { Icmp, Udp, Tcp };
     enum class IpVersion { Auto, V4, V6 };
 
-    double intervalSec = 1.0;     // time between round starts (WinMTR default)
-    int pingSizeBytes = 64;       // probe payload (WinMTR default); UDP sends >= 8, TCP none
+    double intervalSec = 1.0;     // time between round starts
+    int pingSizeBytes = 64;       // probe payload; UDP sends >= 8, TCP none
     double timeoutSec = 3.0;      // reply timeout of each probe (WinMTR uses a fixed 5.0)
     int maxHops = 30;             // largest TTL to probe (WinMTR MAX_HOPS)
     bool resolveNames = true;     // reverse DNS for hop addresses (WinMTR DEFAULT_DNS)

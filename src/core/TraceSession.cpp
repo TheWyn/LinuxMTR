@@ -39,18 +39,16 @@ namespace {
 
 constexpr int kPumpIntervalMs = 20;            // pump timer period
 constexpr int kCoalesceMs = 100;               // shortest time between two hopsChanged()
-// Largest send delay between two TTLs of a round, in nanoseconds (20 ms). Each
-// pump tick sends all due probes, so a shorter delay sends groups (DESIGN.md §3.3).
+// Largest send delay between two TTLs of a round (DESIGN.md §3.3).
 constexpr qint64 kMaxStaggerNs = 20'000'000;
 constexpr qsizetype kMaxPending = 60000;       // keeps the 16-bit seq space from filling
-// Silent target hop (DESIGN.md §3.3): a target hop with this many timeouts in a row
-// is silent.
+// A target hop with this many timeouts in a row is silent (DESIGN.md §3.3).
 constexpr int kSilentTimeouts = 10;
 // This many target answers to the search probes of one hop move the end of the
 // table past the silent target hops before that hop.
 constexpr int kSearchAnswers = 20;
-// Largest UDP socket pool. Wider engine-only settings stay exact: sendProbe()
-// skips a probe whose socket still has one in flight for its TTL.
+// Largest UDP socket pool. A setting that needs more sockets stays exact: sendProbe()
+// skips a probe whose socket still has one in flight for its TTL (DESIGN.md §3.1).
 constexpr int kMaxUdpSockets = linmtr::core::kMaxProberSockets;
 
 const QString kResolveFailed = QStringLiteral("Unable to resolve hostname.");
@@ -263,8 +261,7 @@ void TraceSession::Private::teardownIo()
     }
     dns.abortAll();
     pump.stop();
-    // No hopsChanged() after teardown: an idle session emits nothing. Slots of
-    // stateChanged(Idle) read the final hops() themselves.
+    // An idle session emits no hopsChanged(): slots of stateChanged(Idle) read hops().
     coalesce.stop();
     dirty = false;
     prober.reset();   // disables and releases the notifiers, then closes the fds
@@ -300,7 +297,7 @@ void TraceSession::Private::onForwardLookup(const QHostInfo &info)
         return;
     }
 
-    QHostAddress first;   // the resolver's preferred address (glibc sorts by RFC 6724)
+    QHostAddress first;   // the resolver's preferred address
     QHostAddress v4;
     QHostAddress v6;
     for (const QHostAddress &raw : info.addresses()) {
@@ -367,8 +364,7 @@ void TraceSession::Private::beginTracing()
     if (testBackendFactory) {
         p = testBackendFactory();
     } else if (options.protocol == TraceOptions::Protocol::Tcp) {
-        // The user selected TCP, so no other protocol replaces it. A SYN
-        // carries no payload: pingSizeBytes does not apply.
+        // A SYN carries no payload: pingSizeBytes does not apply.
         p = std::make_unique<TcpProber>(targetAddress, static_cast<quint16>(options.tcpPort));
         if (const int err = p->open(); err != 0) {
             fail(QStringLiteral("Unable to create TCP socket: %1").arg(qt_error_string(err)));
@@ -389,11 +385,8 @@ void TraceSession::Private::beginTracing()
         }
     }
     if (!p) {
-        // One socket per round slot: a TTL uses a socket again only after its
-        // earlier probe there timed out. The pool adds one interval of slack for
-        // timer jitter. Each socket has its own source port, so an ICMP error that
-        // quotes only the UDP header still identifies the round, if it arrives
-        // within the reply timeout (DESIGN.md §3.1).
+        // One socket per round slot, plus one interval of slack for timer jitter
+        // (DESIGN.md §3.1).
         const int slotCount = static_cast<int>(std::ceil(options.timeoutSec / options.intervalSec)) + 2;
         p = std::make_unique<UdpProber>(targetAddress, options.pingSizeBytes,
                                         std::clamp(slotCount, 1, kMaxUdpSockets));
@@ -430,8 +423,7 @@ void TraceSession::Private::onPumpTick()
     drainSocket();
     sweepTimeouts(clock.nsecsElapsed());
 
-    // maxRounds > 0: no new round after that many; the sweeps above go on until
-    // the last one resolves, so roundCompleted() arrives for every round.
+    // After the last round, the sweeps go on, so roundCompleted() comes for each round.
     const qint64 now = clock.nsecsElapsed();
     const bool roundsLeft = options.maxRounds == 0 || currentRound < options.maxRounds;
     if (roundsLeft && now >= nextRoundAtNs && queuedFatal.isEmpty())
@@ -451,10 +443,8 @@ void TraceSession::Private::onSocketActivity()
     finishHandler(gen);
 }
 
-// Emits the signals that the handler collected. During socket processing, only
-// this function emits signals; no loop over sockets or tables emits one. After
-// each emission, it checks the generation again: a slot can stop or restart the
-// session.
+// Emits the queued signals: no loop over sockets or tables emits one. A slot can
+// stop or restart the session, so each emission checks the generation again.
 void TraceSession::Private::finishHandler(int gen)
 {
     if (gen != generation)
@@ -490,8 +480,7 @@ void TraceSession::Private::onProbeEvent(const ProbeEvent &ev)
 {
     auto it = pending.end();
     if (ev.hasSeq) {
-        // Exact match only: a seq that already expired is a late answer. Never
-        // credit it to a newer probe.
+        // Exact match only: an expired seq is a late answer, never a newer probe.
         it = pending.find(ev.seq);
         if (it != pending.end()
             && (it->slot != ev.slot || (ev.ttl > 0 && it->ttl != ev.ttl)))
@@ -516,26 +505,21 @@ void TraceSession::Private::onProbeEvent(const ProbeEvent &ev)
         return;
     HopStats &hop = hopStats[static_cast<std::size_t>(ttl - 1)];
 
-    // The kernel values exclude the time that the answer waited for this thread.
     // replyRttNs() needs the wall clock before the monotonic clock.
     const qint64 wallNs = wallClockNs();
     const qint64 readNs = std::max<qint64>(0, clock.nsecsElapsed() - it->sentAtNs);
     const qint64 rttNs = replyRttNs(ev, readNs, wallNs);
-    // A result below readNs is a kernel value. A kernel value at or above the
-    // timeout shows an answer that arrived late. Ignore it: the sweep expires the
-    // probe, as for an answer after the sweep. The RTT at the read can include a
-    // wait for this thread, thus it never makes an answer late.
+    // A kernel value (below readNs) at or above the timeout is a late answer, which the
+    // sweep expires. The RTT at the read never makes an answer late (DESIGN.md §3.2).
     if (rttNs >= timeoutNs && rttNs < readNs)
         return;
 
-    // Each event of a probe ends the run of timeouts and the skip of its hop
-    // (DESIGN.md §3.3).
+    // An event ends the run of timeouts and the skip of its hop (DESIGN.md §3.3).
     Silence &hopSilence = silence[static_cast<std::size_t>(ttl - 1)];
     hopSilence.timeouts = 0;
     hopSilence.skipped = false;
     if (!it->counts) {
-        // A search probe changes no statistics. Its answer sets the hop address as
-        // for a counted probe.
+        // A search probe changes no statistics; its answer sets the hop address.
         const bool fromTarget = sameAddress(ev.responder, targetAddress);
         bool targetAnswer = false;
         if (ev.kind == ProbeEvent::Kind::Reply) {
@@ -578,7 +562,6 @@ void TraceSession::Private::onProbeEvent(const ProbeEvent &ev)
         break;
     }
     case ProbeEvent::Kind::Error:
-        // WinMTR: an ICMP error names the hop but is not a reply (counts as loss).
         ++hop.timedOut;
         hop.addSample(it->round, -1.0f, it->sentAtMs);
         hop.errorText = ev.errorText;
@@ -619,8 +602,7 @@ int *TraceSession::Private::inFlightCount(int slot, int ttl)
     return index < inFlight.size() ? &inFlight[index] : nullptr;
 }
 
-// Queues one notice per trace for the caps that skip probes (engine and
-// backend together). Skipped probes do not count as sent, so loss stays true.
+// Queues one notice per trace for the caps that skip probes (engine and backend).
 void TraceSession::Private::reportCapacity()
 {
     if (capacityReported)
@@ -673,16 +655,15 @@ void TraceSession::Private::sendProbe(int ttl)
 {
     if (!prober || ttl < 1 || ttl > static_cast<int>(hopStats.size()))
         return;
-    // A search probe past the end of the table (DESIGN.md §3.3) changes no statistics.
-    // It leaves room in the backend for each counted probe that can wait at once.
+    // A search probe leaves backend room for each counted probe that can wait (DESIGN.md §3.3).
     const bool counts = ttl <= currentMaxTtl();
     if (!counts) {
         const int perTtl = static_cast<int>(std::ceil(options.timeoutSec / options.intervalSec)) + 1;
         if (!prober->canSend(std::max(0, currentMaxTtl() * perTtl - countedPending)))
             return;
     }
-    // Engine cap (extreme settings: skip, do not reuse a live seq) and backend
-    // cap (TCP: sockets in flight). A skipped probe does not count as sent.
+    // Engine cap (never reuse a live seq) and backend cap (TCP sockets). A skipped
+    // probe does not count as sent.
     if (pending.size() >= kMaxPending || !prober->canSend(0)) {
         reportCapacity();
         return;
@@ -817,9 +798,8 @@ bool TraceSession::Private::isSilentTargetHop(std::size_t at) const
     return silence[at].timeouts >= kSilentTimeouts && isTargetHop(at);
 }
 
-// WinMTR GetMax(): stop at the first hop that is the target; otherwise trim
-// trailing hops while the last two share the same non-null address. A skipped
-// silent target hop does not stop it (DESIGN.md §3.3).
+// WinMTR GetMax(), except that a skipped silent target hop does not stop it
+// (DESIGN.md §3.3).
 int TraceSession::Private::currentMaxTtl() const
 {
     const int n = static_cast<int>(hopStats.size());
@@ -841,8 +821,7 @@ int TraceSession::Private::currentMaxTtl() const
     return max;
 }
 
-// The highest TTL to probe: currentMaxTtl(), or maxHops while the hop there is a
-// silent target hop. The target can then answer behind it (DESIGN.md §3.3).
+// The highest TTL to probe, with the search probes past a silent end hop.
 int TraceSession::Private::probeLimit() const
 {
     const int end = currentMaxTtl();
@@ -972,8 +951,8 @@ void TraceSession::start(const QString &target, const TraceOptions &options)
 
     QHostAddress literal;
     if (!host.isEmpty() && literal.setAddress(host)) {
-        // A literal address skips DNS. Socket setup runs from the event loop, so
-        // that failures reach the caller in the same way as for host names.
+        // Socket setup runs from the event loop, so failures reach the caller as for
+        // a host name.
         literal = normalizeAddress(literal);
         d->state = State::Tracing;
         emit stateChanged(State::Tracing);

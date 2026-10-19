@@ -19,18 +19,14 @@ class QSocketNotifier;
 
 namespace linmtr::core {
 
-// Unprivileged TCP probes (the "tcpconn" method of mtr --tcp and traceroute -T):
-// one non-blocking connect() per probe, on its own TTL-limited socket. The socket
-// identifies the probe, so answers need no packet matching:
-// - completed handshake, or RST from the target (ECONNREFUSED): target reached;
-// - ICMP time exceeded or destination unreachable: the IP_RECVERR error queue of
-//   the socket reports it, with the address of the router that sent it.
-//   Port unreachable (a REJECT firewall) counts as target reached, as in UDP mode.
-// An answer that arrives after the kernel resent the SYN counts as lost: it can
-// answer the resend, so its RTT is unknown.
-// A probe socket stays open until drain() reports its answer, the session
-// discards the probe (reply timeout), or the prober goes away. The check socket
-// of open() stays open until the prober goes away.
+// Unprivileged TCP probes, the "tcpconn" method of mtr --tcp and traceroute -T: one
+// non-blocking connect() per probe, on its own TTL-limited socket, so the socket
+// identifies the probe (DESIGN.md §3.4).
+// A handshake, an RST or a port unreachable means target reached. ICMP errors come
+// from the error queue of the socket. An answer after a SYN resend counts as lost.
+// A probe socket stays open until drain() reports its answer, the session calls
+// discard(), or the prober goes away. The check socket of open() stays open until the
+// prober goes away.
 class TcpProber final : public ProbeBackend
 {
 public:

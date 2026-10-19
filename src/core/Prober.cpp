@@ -22,8 +22,7 @@ namespace linmtr::core {
 namespace {
 
 // Most messages that one drain() call reads, so that a flood cannot starve the
-// event loop. The notifiers are level-triggered, so the remaining messages
-// wake the loop again.
+// event loop. The level-triggered notifiers wake the loop again for the rest.
 constexpr int kDrainBudget = 1024;
 
 // The ICMP type numbers are local because mixed glibc and kernel headers conflict.
@@ -300,10 +299,9 @@ int Prober::send(int ttl, quint16 seq, int slot)
             continue;
         if (err == EAGAIN || err == EWOULDBLOCK || err == ENOBUFS || err == ENOMEM || retried)
             return err;
-        // With IP_RECVERR, each queued ICMP error also sets the pending error of
-        // the socket. The next send reports and clears it, and does not send.
-        // That error belongs to an earlier probe, so retry once. A real local
-        // failure (no route, EPERM) repeats, and the function returns it.
+        // Each queued ICMP error also sets the pending socket error, which the next
+        // send reports instead of sending. It belongs to an earlier probe, so retry
+        // once; a real local failure (no route, EPERM) repeats.
         retried = true;
     }
     return EINTR;

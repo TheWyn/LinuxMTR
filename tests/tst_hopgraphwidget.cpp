@@ -16,9 +16,7 @@
 
 namespace {
 
-// The geometry that HopGraphWidget.cpp documents, for a 400 x 200 widget
-// without a legend. The bottom margin of 28 px holds the lost-probe ticks and
-// the time labels. The window has one round for each 3 px of plot width.
+// The geometry of HopGraphWidget.cpp for a 400 x 200 widget without a legend.
 constexpr int kWidth = 400;
 constexpr int kHeight = 200;
 constexpr int kPlotLeft = 44;
@@ -266,8 +264,7 @@ void TestHopGraphWidget::toolTipAtSample()
 
 // A flat line at 12 ms (ceiling 20): round 30 is at x 392, y 73.6. The probe
 // pixel is 2 px below the line, inside the marker circle (radius 4) and off
-// the 1 px line, so only the marker can make it red. The tooltip shows only
-// while a window of the application is active.
+// the 1 px line. Thus only the marker can make it red.
 void TestHopGraphWidget::hoverMarker()
 {
     const auto flat = [](float ms) {
@@ -313,8 +310,8 @@ void TestHopGraphWidget::hoverMarker()
     QApplication::sendEvent(&graph, &leave);
     QVERIFY(isClose(render(graph).pixel(probe), base));
 
-    // A move repaints only when the marker moves, because a paint delays the
-    // read of replies. After the leave, a move onto the same sample moves it.
+    // A move repaints only when the marker moves. After the leave, a move onto the
+    // same sample moves it.
     QTest::qWait(50);
     int paints = graph.paints;
     QApplication::sendEvent(&graph, &move);
@@ -445,11 +442,10 @@ void TestHopGraphWidget::wideLinesStayFast_data()
     QTest::newRow("highlight, a lost probe every 10 rounds") << 0 << qreal(1) << 10 << 5.0;
 }
 
-// Qt strokes a polyline that is wider than 1 device pixel as one path. For the
-// graph of this test, that takes about 40 ms for the highlight and 0.34 s at
-// scale 2. The test compares the render times with those of the 1 px lines at
-// scale 1, so that the speed of the machine cancels out. It counts the CPU time
-// of this thread, so that other tasks on a busy machine do not change the result.
+// A wide polyline would be one slow path (DESIGN.md §4). On this graph the polyline
+// took about 40 ms for the highlight and 0.34 s at scale 2. The test compares the
+// render times with those of the 1 px lines at scale 1, which cancels the speed of the
+// machine. It counts the CPU time of this thread, which cancels the load of the machine.
 void TestHopGraphWidget::wideLinesStayFast()
 {
     QFETCH(int, highlight);

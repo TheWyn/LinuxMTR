@@ -61,7 +61,6 @@ ReportRunner::ReportRunner(const QString &host, const TraceOptions &options, int
 {
     // Send exactly m_cycles rounds and wait for them, so that Sent equals
     // --cycles and no probe is still in flight when the report prints.
-    // 0 is unlimited: the trace runs until a signal.
     m_options.maxRounds = m_cycles;
     m_watchdog->setSingleShot(true);
     connect(m_watchdog, &QTimer::timeout, this, &ReportRunner::onWatchdog);

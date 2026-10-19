@@ -23,7 +23,7 @@ constexpr int kMarginRight = 8;
 constexpr int kMarginTop = 8;
 constexpr int kLegendHeight = 16;
 constexpr int kMarginBottom = 28;   // lost-probe ticks and the time labels
-constexpr int kPxPerRound = 3;     // X scale: older rounds scroll off instead of compressing
+constexpr int kPxPerRound = 3;     // X scale; older rounds scroll off at the left edge
 constexpr int kHitPx = 6;          // tooltip: the largest pointer distance to a sample
 
 // The Tableau 10 palette: ten hues that are easy to tell apart.
@@ -171,8 +171,7 @@ QString HopGraphWidget::toolTipAt(const QPoint &pos) const
 void HopGraphWidget::updateToolTip()
 {
     m_hit = hitAt(*m_pointer);
-    // No tooltip while no LinMTR window is active (looser than Qt). No tip rect: with
-    // a rect, Qt hides the tip when the pointer leaves it.
+    // No tip rect: with a rect, Qt hides the tip when the pointer leaves it.
     if (m_hit.text.isEmpty() || QApplication::activeWindow() == nullptr)
         QToolTip::hideText();
     else
@@ -184,8 +183,7 @@ void HopGraphWidget::mouseMoveEvent(QMouseEvent *event)
     const Hit old = m_hit;
     m_pointer = event->position().toPoint();
     updateToolTip();
-    // A repaint costs CPU and delays the read of replies. An answer without a kernel
-    // RTT, for example a TCP reset, then gets a larger RTT (DESIGN.md §3.2).
+    // A repaint delays the read of replies (DESIGN.md §4).
     if (m_hit.series != old.series || m_hit.point != old.point)
         update();   // the marker moved
 }
@@ -296,12 +294,10 @@ void HopGraphWidget::paintEvent(QPaintEvent *)
     p.setRenderHint(QPainter::Antialiasing);
     const auto drawSeries = [&](const Series &s, int penWidth) {
         p.setPen(QPen(s.color, penWidth));
-        // Qt strokes a polyline that is wider than 1 device pixel (the highlight,
-        // a scaled screen) as one path, which takes from tens of ms to seconds for
-        // a full window. Separate lines go to its line rasterizer. Their square caps
-        // overlap at the joints, so the line is a little heavier there. The colours
-        // must be opaque, else each joint shows as a dark dot. A thin line stays one
-        // polyline, which is faster and has no overlap.
+        // A line wider than 1 device pixel is drawn as separate lines: Qt strokes a wide
+        // polyline as one slow path (DESIGN.md §4). The square caps overlap at the
+        // joints, which makes them a little heavier. The colours must be opaque, else
+        // each joint shows a dark dot.
         const bool wide = penWidth * p.deviceTransform().m11() > 1;
         QPolygonF run;   // replies in consecutive rounds
         QList<QLineF> lines;
