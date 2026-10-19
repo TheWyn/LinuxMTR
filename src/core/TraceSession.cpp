@@ -174,6 +174,7 @@ struct TraceSession::Private
     QElapsedTimer clock;
 
     QHash<quint16, Pending> pending;
+    int countedPending = 0;           // entries of pending with counts set
     std::vector<int> inFlight;        // pending probes per (slot, ttl): slot * maxHops + ttl - 1
     std::map<int, Round> rounds;
     quint16 nextSeq = 0;
@@ -228,6 +229,7 @@ void TraceSession::Private::resetForStart(const QString &newTarget, const TraceO
     silence.assign(hopStats.size(), Silence{});
 
     pending.clear();
+    countedPending = 0;
     inFlight.clear();
     rounds.clear();
     nextSeq = 0;
@@ -267,6 +269,7 @@ void TraceSession::Private::teardownIo()
     dirty = false;
     prober.reset();   // disables and releases the notifiers, then closes the fds
     pending.clear();
+    countedPending = 0;
     inFlight.clear();
     rounds.clear();
     roundActive = false;
@@ -601,6 +604,8 @@ TraceSession::Private::releasePending(QHash<quint16, Pending>::iterator it)
         --r->second.outstanding;
     if (int *count = inFlightCount(it->slot, it->ttl); count != nullptr && *count > 0)
         --*count;
+    if (it->counts)
+        --countedPending;
     return pending.erase(it);
 }
 
@@ -672,13 +677,8 @@ void TraceSession::Private::sendProbe(int ttl)
     // It leaves room in the backend for each counted probe that can wait at once.
     const bool counts = ttl <= currentMaxTtl();
     if (!counts) {
-        int counted = 0;
-        for (const Pending &p : pending) {
-            if (p.counts)
-                ++counted;
-        }
         const int perTtl = static_cast<int>(std::ceil(options.timeoutSec / options.intervalSec)) + 1;
-        if (!prober->canSend(std::max(0, currentMaxTtl() * perTtl - counted)))
+        if (!prober->canSend(std::max(0, currentMaxTtl() * perTtl - countedPending)))
             return;
     }
     // Engine cap (extreme settings: skip, do not reuse a live seq) and backend
@@ -712,6 +712,8 @@ void TraceSession::Private::sendProbe(int ttl)
         ++hop.sent;
     if (err == 0) {
         pending.insert(seq, Pending{ttl, currentRound, slot, sentAt, sentAtMs, counts});
+        if (counts)
+            ++countedPending;
         if (slotInFlight != nullptr)
             ++*slotInFlight;
         ++round.outstanding;

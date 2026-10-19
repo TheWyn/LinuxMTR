@@ -1442,33 +1442,38 @@ void TestCoreParsers::sessionSearchCap()
     TraceSession session;
     QSignalSpy errors(&session, &TraceSession::errorOccurred);
     QSignalSpy notices(&session, &TraceSession::infoMessage);
-    session.start(kFakeTarget.toString(), options);
-    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= 3 || !errors.isEmpty(), 10000);
-    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
-    QCOMPARE(session.hops().size(), kHops);
+    // A second run of the same session must start its count of counted probes at 0.
+    for (int run = 0; run < 2; ++run) {
+        down = false;
+        moreDown = false;
+        session.start(kFakeTarget.toString(), options);
+        QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= 3 || !errors.isEmpty(), 10000);
+        QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+        QCOMPARE(session.hops().size(), kHops);
 
-    down = true;
-    // The search probes fill the fake up to the reserve.
-    QTRY_VERIFY_WITH_TIMEOUT(fake->mostInFlight() >= kCap - kReserve, 20000);
-    int rounds = session.roundsCompleted();
-    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= rounds + 10, 10000);
-    QVERIFY2(notices.isEmpty(), qPrintable(notices.value(0).value(0).toString()));
-    QCOMPARE(session.hops().size(), kHops);
-    // Each completed round sent one probe to each hop of the table.
-    for (const HopStats &hop : session.hops())
-        QVERIFY2(hop.sent >= quint64(session.roundsCompleted()), qPrintable(QString::number(hop.ttl)));
+        down = true;
+        // The search probes fill the fake up to the reserve.
+        QTRY_VERIFY_WITH_TIMEOUT(fake->mostInFlight() >= kCap - kReserve, 20000);
+        int rounds = session.roundsCompleted();
+        QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= rounds + 10, 10000);
+        QVERIFY2(notices.isEmpty(), qPrintable(notices.value(0).value(0).toString()));
+        QCOMPARE(session.hops().size(), kHops);
+        // Each completed round sent one probe to each hop of the table.
+        for (const HopStats &hop : session.hops())
+            QVERIFY2(hop.sent >= quint64(session.roundsCompleted()), qPrintable(QString::number(hop.ttl)));
 
-    // Hops 2 to 5 stop answering too, so about 150 counted probes wait.
-    moreDown = true;
-    rounds = session.roundsCompleted();
-    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= rounds + 30, 20000);
-    QVERIFY2(notices.isEmpty(), qPrintable(notices.value(0).value(0).toString()));
-    // The search probes keep their room of about 70 beside them.
-    QTRY_VERIFY_WITH_TIMEOUT(fake->mostInFlight() >= 200, 10000);
-    QCOMPARE(session.hops().size(), kHops);
-    for (const HopStats &hop : session.hops())
-        QVERIFY2(hop.sent >= quint64(session.roundsCompleted()), qPrintable(QString::number(hop.ttl)));
-    session.stop();
+        // Hops 2 to 5 stop answering too, so about 150 counted probes wait.
+        moreDown = true;
+        rounds = session.roundsCompleted();
+        QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= rounds + 30, 20000);
+        QVERIFY2(notices.isEmpty(), qPrintable(notices.value(0).value(0).toString()));
+        // The search probes keep their room of about 70 beside them.
+        QTRY_VERIFY_WITH_TIMEOUT(fake->mostInFlight() >= 200, 10000);
+        QCOMPARE(session.hops().size(), kHops);
+        for (const HopStats &hop : session.hops())
+            QVERIFY2(hop.sent >= quint64(session.roundsCompleted()), qPrintable(QString::number(hop.ttl)));
+        session.stop();
+    }
 }
 
 void TestCoreParsers::sessionSilentRun_data()
