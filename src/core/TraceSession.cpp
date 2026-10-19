@@ -672,10 +672,18 @@ void TraceSession::Private::sendProbe(int ttl)
     if (!prober || ttl < 1 || ttl > static_cast<int>(hopStats.size()))
         return;
     // A search probe past the end of the table (DESIGN.md §3.3) changes no statistics.
-    // It leaves room in the backend for one probe of each hop up to the end.
+    // It leaves room in the backend for each counted probe that can wait at once.
     const bool counts = ttl <= currentMaxTtl();
-    if (!counts && !prober->canSend(currentMaxTtl()))
-        return;
+    if (!counts) {
+        int counted = 0;
+        for (const Pending &p : pending) {
+            if (p.counts)
+                ++counted;
+        }
+        const int perTtl = static_cast<int>(std::ceil(options.timeoutSec / options.intervalSec)) + 1;
+        if (!prober->canSend(std::max(0, currentMaxTtl() * perTtl - counted)))
+            return;
+    }
     // Engine cap (extreme settings: skip, do not reuse a live seq) and backend
     // cap (TCP: sockets in flight). A skipped probe does not count as sent.
     if (pending.size() >= kMaxPending || !prober->canSend(0)) {

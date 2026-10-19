@@ -1401,17 +1401,27 @@ void TestCoreParsers::sessionRateLimitedTarget()
     session.stop();
 }
 
-// The fake takes at most 40 probes in flight, as the TCP prober takes 256. Hops 1
-// to 5 are routers, and the target at hop 6 stops answering. With a reply timeout
-// of 0.5 s, the search probes of 5 rounds would be in flight: more than the fake
-// takes. A search probe leaves room for one probe of each hop up to the end. Thus
-// the session skips no probe that counts, and it emits no capacity notice.
+// The fake takes at most 256 probes in flight, as the TCP prober. Hops 1 to 5 are
+// routers, and the target at hop 6 stops answering. With a reply timeout of 3 s,
+// the search probes of 30 rounds would be in flight: more than the fake takes. A
+// search probe leaves room for each counted probe that can wait at once: 31 for
+// each hop of the table, less the counted probes in flight. Thus the session skips
+// no probe that counts and emits no capacity notice, also when hops 2 to 5 then
+// stop answering too. About 150 counted probes then wait: the test fails for a
+// room of 24 or fewer probes for each hop, and a stall of the host cannot push the
+// probes to the cap. The + 1 of the 31 (tick jitter) is out of its reach.
 void TestCoreParsers::sessionSearchCap()
 {
-    static constexpr int kCap = 40;
+    static constexpr int kCap = 256;
+    static constexpr int kHops = 6;
+    static constexpr int kPerTtl = 31;   // ceil(3 s / 0.1 s) + 1
+    static constexpr int kReserve = kHops * kPerTtl;
     bool down = false;
-    const auto answer = [&down](int ttl) -> FakeAnswer {
-        if (ttl < 6)
+    bool moreDown = false;
+    const auto answer = [&down, &moreDown](int ttl) -> FakeAnswer {
+        if (ttl >= 2 && moreDown)
+            return 0;
+        if (ttl < kHops)
             return routerReply(ttl);
         if (down)
             return 0;
@@ -1426,23 +1436,34 @@ void TestCoreParsers::sessionSearchCap()
     const auto restore = qScopeGuard([] { linmtr::core::setBackendFactoryForTests({}); });
 
     TraceOptions options = fakeOptions(0.1, 30);
-    options.timeoutSec = 0.5;
+    options.timeoutSec = 3.0;
     TraceSession session;
     QSignalSpy errors(&session, &TraceSession::errorOccurred);
     QSignalSpy notices(&session, &TraceSession::infoMessage);
     session.start(kFakeTarget.toString(), options);
     QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= 3 || !errors.isEmpty(), 10000);
     QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
-    QCOMPARE(session.hops().size(), 6);
+    QCOMPARE(session.hops().size(), kHops);
 
     down = true;
-    // The search probes fill the fake up to the room for hops 1 to 6.
-    QTRY_VERIFY_WITH_TIMEOUT(fake->mostInFlight() >= kCap - 6, 10000);
-    const int rounds = session.roundsCompleted();
+    // The search probes fill the fake up to the reserve.
+    QTRY_VERIFY_WITH_TIMEOUT(fake->mostInFlight() >= kCap - kReserve, 20000);
+    int rounds = session.roundsCompleted();
     QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= rounds + 10, 10000);
     QVERIFY2(notices.isEmpty(), qPrintable(notices.value(0).value(0).toString()));
-    QCOMPARE(session.hops().size(), 6);
+    QCOMPARE(session.hops().size(), kHops);
     // Each completed round sent one probe to each hop of the table.
+    for (const HopStats &hop : session.hops())
+        QVERIFY2(hop.sent >= quint64(session.roundsCompleted()), qPrintable(QString::number(hop.ttl)));
+
+    // Hops 2 to 5 stop answering too, so about 150 counted probes wait.
+    moreDown = true;
+    rounds = session.roundsCompleted();
+    QTRY_VERIFY_WITH_TIMEOUT(session.roundsCompleted() >= rounds + 30, 20000);
+    QVERIFY2(notices.isEmpty(), qPrintable(notices.value(0).value(0).toString()));
+    // The search probes keep their room of about 70 beside them.
+    QTRY_VERIFY_WITH_TIMEOUT(fake->mostInFlight() >= 200, 10000);
+    QCOMPARE(session.hops().size(), kHops);
     for (const HopStats &hop : session.hops())
         QVERIFY2(hop.sent >= quint64(session.roundsCompleted()), qPrintable(QString::number(hop.ttl)));
     session.stop();

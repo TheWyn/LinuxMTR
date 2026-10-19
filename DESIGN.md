@@ -207,14 +207,25 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
   the address and `isTarget` of the hop, as for a probe that counts. Thus the search probes
   of a target outage do not show in the table.
 - Cost: the search probes cost as much as a trace to a target that never answers, up to
-  `maxHops - maxTtl` more probes in each round. The session sends a search probe only while
-  the backend has room for `maxTtl` more probes (`canSend()`). Thus the search probes do not
-  take the room of the probes that count. Only the TCP backend has a cap of its own (256
-  sockets, §3.4). During a target outage, about
-  `(maxHops - maxTtl + 1) * timeoutSec / intervalSec` TCP probes wait for an answer. With
-  30 hops and a 3 s reply timeout, they fill the cap at intervals below
-  `3 s * (31 - maxTtl) / 256`, at most about 0.35 s. Then the later TTLs get fewer search
-  probes.
+  `maxHops - maxTtl` more probes in each round. A probe that counts waits `timeoutSec`,
+  plus up to one pump period (20 ms), for its answer. Thus each hop of the table can have
+  `perTtl = ceil(timeoutSec / intervalSec) + 1` probes that count in flight at once. The
+  `+ 1` covers that pump period and the timer jitter.
+- Room: the session sends a search probe only while the backend has free room for
+  `maxTtl * perTtl` probes that count, less those in flight (`canSend()`). Thus the search
+  probes do not take the room of the probes that count, also when more hops of the table
+  stop answering. Exception: when the end moves back (End move, below), the hops that left
+  the table can still have probes in flight. Until these probes time out, the probes that
+  count can be more than `maxTtl * perTtl`. Then the search probes can take their room.
+- TCP cap: only the TCP backend has a cap of its own (256 sockets, §3.4), so this rule does
+  not stop the ICMP and UDP search probes. For TCP, search probes go only while
+  `maxTtl * perTtl` is below 256. With the defaults (1 s interval, 3 s reply timeout), this
+  is up to `maxTtl` 63; at `-i 0.1` with a 3 s reply timeout, up to `maxTtl` 8.
+- Target outage with TCP: about `(maxHops - maxTtl) * timeoutSec / intervalSec` search
+  probes wait for an answer. When this number is at least `256 - maxTtl * perTtl`, they fill
+  the rest of the TCP cap, and the later TTLs get fewer search probes. With 30 hops and a
+  3 s reply timeout, this occurs at intervals below 0.35 s to 0.43 s (3/7 s), by `maxTtl`.
+  At `maxTtl` 29, `perTtl` is 9 below 3/7 s, so no search probe goes (29 * 9 > 256).
 - End move: each hop also counts the answers of the target to its search probes. These are
   the replies that reach the target, and the replies and ICMP errors from the target
   address. When the hop at `maxTtl` gets its 10th timeout in a row, these counts of all later
@@ -262,7 +273,8 @@ Socket notifiers and each pump tick drain the normal queue and the error queue u
 - One non-blocking `connect()` to `targetAddress:tcpPort` per probe, on its own socket with
   `IP_RECVERR` and the TTL; the socket identifies the probe. At most 256 sockets are in
   flight; at the cap, the session skips the send and emits one `infoMessage`. A search probe
-  (§3.3) also leaves room for `maxTtl` more sockets.
+  (§3.3) also leaves room for all the probes that count and can be in flight at once
+  (`maxTtl * perTtl` sockets).
 - Target reached: a completed handshake (the prober then resets it), an RST, or an ICMP
   port unreachable from a REJECT firewall. The offender is then the hop address. The prober
   reads the error queue before `SO_ERROR`, so that the offender stays known.
