@@ -32,7 +32,8 @@ build() {
 }
 
 check() {
-  ctest --test-dir build --output-on-failure
+  # The tests wait on timers, not on the CPU, so 32 jobs help on any core count.
+  ctest --test-dir build --output-on-failure -j 32
 }
 
 package() {

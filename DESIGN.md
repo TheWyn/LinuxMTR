@@ -456,7 +456,13 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
   system calls on the GUI thread. Every fd is `SOCK_NONBLOCK | SOCK_CLOEXEC` and closes in
   exactly one place. `CMakeLists.txt` globs `src/**/*.{cpp,h}`: new files need no CMake edit.
   All sources except `main.cpp` go into the static library `linmtr_lib`, which the binary and
-  the QtTest tests in `tests/` link. `ctest` runs the tests, and so does the PKGBUILD `check()`.
+  the QtTest tests in `tests/` link. `ctest --test-dir build -j 32` runs the tests, and so does
+  the PKGBUILD `check()`. After each link, `tests/add_test_functions.cmake` writes one ctest
+  entry per test function of `tst_core_parsers` (through `TEST_INCLUDE_FILES`), so a new test
+  function gets its own entry after the next build; a new test file needs an item in the
+  `foreach` list of `tests/CMakeLists.txt`. The session tests wait on real timers, not on the
+  CPU, so with 32 jobs the suite takes about as long as its slowest test (about 17 s), also on
+  one or two cores. In series (`-j 1`) it takes about 80 s.
   A test can give `TraceSession` a fake backend (`setBackendFactoryForTests()` in `Prober.h`),
   so that it drives the session without probe sockets.
 

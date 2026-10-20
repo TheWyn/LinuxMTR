@@ -133,7 +133,9 @@ cmake --build build
 ./build/linmtr
 ```
 
-To run the tests, use `ctest --test-dir build`.
+To run the tests, use `ctest --test-dir build -j 32`. The session tests wait on real timers,
+not on the CPU, so with 32 jobs the suite takes about as long as its slowest test (about 17 s),
+also on one or two cores. In series (`-j 1`) it takes about 80 s.
 
 To install system-wide without a package (the prefix is `/usr/local` by default):
 
