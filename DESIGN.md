@@ -456,7 +456,9 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
   conflicts with `linmtr`.
 - Qt style, `m_` members, one class per file pair, clean under `-Wall -Wextra`. No blocking
   system calls on the GUI thread. Every fd is `SOCK_NONBLOCK | SOCK_CLOEXEC` and closes in
-  exactly one place. `CMakeLists.txt` globs `src/**/*.{cpp,h}`: new files need no CMake edit.
+  exactly one place. The live test `liveStartStopClosesFds` checks that Start and Stop in TCP
+  mode leave the fd count unchanged. `CMakeLists.txt` globs `src/**/*.{cpp,h}`: new files
+  need no CMake edit.
   All sources except `main.cpp` go into the static library `linmtr_lib`, which the binary and
   the QtTest tests in `tests/` link. `ctest --test-dir build -j 32` runs the tests, and so does
   the PKGBUILD `check()`. After each link, `tests/add_test_functions.cmake` writes one ctest

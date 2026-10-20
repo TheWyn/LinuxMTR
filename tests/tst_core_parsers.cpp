@@ -6,6 +6,7 @@
 #include <QScopeGuard>
 #include <QSet>
 #include <QSignalSpy>
+#include <QSocketNotifier>
 #include <QTcpServer>
 #include <QtTest>
 
@@ -16,6 +17,8 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
+#include <iterator>
 #include <memory>
 #include <numeric>
 #include <utility>
@@ -332,6 +335,14 @@ QString arrivalStampsUnavailable(UniqueFd *hold)
     return QStringLiteral("the kernel did not turn on the arrival stamps");
 }
 
+// The open fds of this process, or -1. The handle of the count is one of them each time.
+int fdCount()
+{
+    std::error_code ec;
+    const std::filesystem::directory_iterator it("/proc/self/fd", ec);
+    return ec ? -1 : int(std::distance(it, std::filesystem::directory_iterator()));
+}
+
 } // namespace
 
 // Feeds crafted control data to decodeExtendedError() and decodeArrivalStamp(),
@@ -379,6 +390,7 @@ private slots:
     void liveLoopbackTrace();
     void liveStalledReadRtt_data();
     void liveStalledReadRtt();
+    void liveStartStopClosesFds();
     void reportRunnerStopsOnSignal();
 };
 
@@ -1675,6 +1687,69 @@ void TestCoreParsers::liveStalledReadRtt()
     else
         QVERIFY2(hop.lastMs >= kStallMs, rtt.constData());
     session.stop();
+}
+
+// One session starts and stops TCP traces to a port that resets each connect() and to
+// a port that drops each SYN, so that Stop closes probes in flight.
+void TestCoreParsers::liveStartStopClosesFds()
+{
+    if (fdCount() < 0)
+        QSKIP("no /proc/self/fd");
+    const auto sa = [](sockaddr_in *sin) { return reinterpret_cast<sockaddr *>(sin); };
+    socklen_t len = sizeof(sockaddr_in);
+
+    // A bound port that does not listen resets each connect().
+    UniqueFd resetting(::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0));
+    UniqueFd check(::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0));
+    sockaddr_in resetAt = v4("127.0.0.1");
+    if (::bind(resetting.get(), sa(&resetAt), len) != 0
+        || ::getsockname(resetting.get(), sa(&resetAt), &len) != 0
+        || ::connect(check.get(), sa(&resetAt), len) == 0 || errno != ECONNREFUSED)
+        QSKIP(qPrintable(QStringLiteral("TCP to 127.0.0.1: %1").arg(qt_error_string(errno))));
+
+    // A full accept queue drops each SYN: backlog 0 and one connection that nobody accepts.
+    UniqueFd dropping(::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0));
+    UniqueFd queued(::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0));
+    sockaddr_in dropAt = v4("127.0.0.1");
+    QVERIFY(::bind(dropping.get(), sa(&dropAt), len) == 0);
+    QVERIFY(::getsockname(dropping.get(), sa(&dropAt), &len) == 0);
+    QVERIFY(::listen(dropping.get(), 0) == 0);
+    QVERIFY(::connect(queued.get(), sa(&dropAt), len) == 0);
+
+    TraceOptions options;
+    options.protocol = TraceOptions::Protocol::Tcp;
+    options.intervalSec = 0.1;
+    options.timeoutSec = 0.5;   // below the first SYN retransmit
+    options.maxHops = 3;
+    options.resolveNames = false;
+
+    TraceSession session;
+    QSignalSpy errors(&session, &TraceSession::errorOccurred);
+    const quint16 ports[] = {ntohs(resetAt.sin_port), ntohs(dropAt.sin_port)};
+    int baseline = -1;
+    for (int cycle = 0; cycle < 5; ++cycle) {   // cycle 0 sets the baseline
+        for (const quint16 port : ports) {
+            options.tcpPort = port;
+            session.start(QStringLiteral("127.0.0.1"), options);
+            QTRY_VERIFY_WITH_TIMEOUT(session.hops().value(0).sent >= 3 || !errors.isEmpty(), 5000);
+            QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+            // An answered probe closes on the read: between rounds only the stamp keeper is open.
+            if (baseline >= 0 && port == ports[0])
+                QTRY_COMPARE_WITH_TIMEOUT(fdCount(), baseline + 1, 5000);
+            if (cycle == 1 && port == ports[1]) {
+                // A probe that times out closes before Stop: at most 7 per TTL stay open.
+                QTRY_VERIFY_WITH_TIMEOUT(session.hops().value(0).timedOut >= 5, 5000);
+                QVERIFY(fdCount() <= baseline + 1 + 3 * 7);
+            }
+            session.stop();
+            if (baseline >= 0)
+                QTRY_COMPARE_WITH_TIMEOUT(fdCount(), baseline, 5000);
+            // A notifier that outlives its socket watches the next socket with that number.
+            QTRY_VERIFY(session.findChildren<QSocketNotifier *>().isEmpty());
+        }
+        if (baseline < 0)
+            baseline = fdCount();
+    }
 }
 
 // Report mode with -c 0 runs until a signal, then prints the report and exits
