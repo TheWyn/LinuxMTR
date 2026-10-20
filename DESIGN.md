@@ -460,9 +460,11 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
   the PKGBUILD `check()`. After each link, `tests/add_test_functions.cmake` writes one ctest
   entry per test function of `tst_core_parsers` (through `TEST_INCLUDE_FILES`), so a new test
   function gets its own entry after the next build; a new test file needs an item in the
-  `foreach` list of `tests/CMakeLists.txt`. The session tests wait on real timers, not on the
-  CPU, so with 32 jobs the suite takes about as long as its slowest test (about 17 s), also on
-  one or two cores. In series (`-j 1`) it takes about 80 s.
+  `foreach` list of `tests/CMakeLists.txt`. A multi-config generator gets one list per
+  configuration: give `-C` the name as the build spells it (`-C Debug`, not `-C debug`).
+  The session tests wait on real timers, not on the CPU, so with 32 jobs the suite takes
+  about as long as its slowest test (about 17 s), also on one or two cores. In series
+  (`-j 1`) it takes about 80 s.
   A test can give `TraceSession` a fake backend (`setBackendFactoryForTests()` in `Prober.h`),
   so that it drives the session without probe sockets.
 
