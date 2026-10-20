@@ -1,7 +1,7 @@
 .\" Manual page for LinMTR.
 .\" SPDX-License-Identifier: GPL-2.0-only
 .\" Copyright (C) 2026 Wyn
-.TH LINMTR 1 2026-10-19 "LinMTR 0.1.0" "User Commands"
+.TH LINMTR 1 2026-10-20 "LinMTR 0.1.0" "User Commands"
 .SH NAME
 linmtr \- WinMTR\-style traceroute and ping network diagnostic tool
 .SH SYNOPSIS
@@ -350,6 +350,9 @@ Double\-click a row to open the
 dialog for that hop.
 The dialog shows a graph of the round\-trip times of the hop and updates
 while the trace runs.
+When the hop is not in the current trace, the comment field shows
+.RB \(lq "This hop is not in the current trace." \(rq
+and the other values stay.
 The
 .B Ping time
 group of the dialog also shows the jitter: the mean change of the

@@ -11,8 +11,8 @@ class HopTableModel;
 
 // WinMTR "Host properties" dialog for one hop, with a graph of its round-trip
 // times. It follows the hop by TTL while the model changes; when no row has
-// that TTL, it keeps the last values. The address has its own field, so the
-// name field never repeats it.
+// that TTL, the comment says so and the other fields keep the last values. The
+// address has its own field, so the name field never repeats it.
 class HopPropertiesDialog : public QDialog
 {
     Q_OBJECT

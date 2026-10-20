@@ -118,10 +118,10 @@ HopPropertiesDialog::HopPropertiesDialog(HopTableModel *model, int row, QWidget 
     layout->addWidget(m_graph, 1);
     layout->addWidget(buttons);
 
-    // HopTableModel emits these for changed and new rows. A removed row needs
-    // no refresh: the dialog keeps the last values of a hop that left.
+    // Removed rows too, so that a hop that leaves the trace says so.
     connect(model, &QAbstractItemModel::dataChanged, this, &HopPropertiesDialog::refresh);
     connect(model, &QAbstractItemModel::rowsInserted, this, &HopPropertiesDialog::refresh);
+    connect(model, &QAbstractItemModel::rowsRemoved, this, &HopPropertiesDialog::refresh);
     refresh();
 
     buttons->button(QDialogButtonBox::Ok)->setFocus();
@@ -132,8 +132,10 @@ void HopPropertiesDialog::refresh()
     const QList<HopStats> &hops = m_model->hops();
     const auto it = std::find_if(hops.cbegin(), hops.cend(),
                                  [this](const HopStats &h) { return h.ttl == m_ttl; });
-    if (it == hops.cend())
+    if (it == hops.cend()) {
+        setField(m_comment, tr("This hop is not in the current trace."));
         return;
+    }
     const HopStats &hop = *it;
 
     // Both cases deviate from upstream on purpose (DESIGN.md §8 item 9).

@@ -212,17 +212,19 @@ the reports. **Show route graph** also applies immediately.
 
 The **Host properties** dialog shows the statistics of one hop and a graph of its
 round-trip times. It updates while the trace runs. You can open a dialog for each hop, and
-the dialogs stay open when you stop and start a trace. To show a graph of all hops under
-the table, select **Show route graph** in **Options**. Drag the bar between the table and
-the graph to change their heights. In both graphs, a line shows the round-trip time of a
-hop in each round. A line has a gap where a round has no reply, and a short tick below
-the zero line marks each lost probe. A graph shows one round for each 3 pixels of its
-width. When the graph is full, the oldest rounds move off its left edge. Time labels under
-the graph show when the rounds were sent. The step between the labels depends on the
-interval, from 1 second to 24 hours. Move the pointer onto a line or a tick to see the hop,
-its host, the time when the probe was sent and the round-trip time, or **Lost** for a lost
-probe. A circle marks that probe. In the route graph, the legend gives the hop
-number of each colour, and the hop that you select in the table has a wider line.
+the dialogs stay open when you stop and start a trace. When the hop of a dialog is not in
+the current trace, the comment field shows `This hop is not in the current trace.` and the
+other values stay. To show a graph of all hops under the table, select **Show route graph**
+in **Options**. Drag the bar between the table and the graph to change their heights. In
+both graphs, a line shows the round-trip time of a hop in each round. A line has a
+gap where a round has no reply, and a short tick below the zero line marks each lost
+probe. A graph shows one round for each 3 pixels of its width. When the graph is full,
+the oldest rounds move off its left edge. Time labels under the graph show when the
+rounds were sent. The step between the labels depends on the interval, from 1 second
+to 24 hours. Move the pointer onto a line or a tick to see the hop, its host, the time
+when the probe was sent and the round-trip time, or **Lost** for a lost probe. A circle
+marks that probe. In the route graph, the legend gives the hop number of each colour,
+and the hop that you select in the table has a wider line.
 
 In the Host properties dialog, **Jitter** is the mean change of the round-trip time from
 one reply to the next. Lost probes do not count: the reply after a lost probe pairs with

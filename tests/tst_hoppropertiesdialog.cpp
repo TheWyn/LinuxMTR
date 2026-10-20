@@ -46,22 +46,34 @@ void TestHopPropertiesDialog::followsHopByTtl()
     const QList<QLineEdit *> fields = dialog.findChildren<QLineEdit *>();
     QCOMPARE(fields.size(), 11);
     QLineEdit *ip = fields.at(1);
+    QLineEdit *comment = fields.at(2);
     QLineEdit *sent = fields.at(3);
+    const QString alive = QStringLiteral("Host alive.");
+    const QString gone = QStringLiteral("This hop is not in the current trace.");
     QCOMPARE(ip->text(), QStringLiteral("10.0.0.2"));
+    QCOMPARE(comment->text(), alive);
     QCOMPARE(sent->text(), QStringLiteral("5"));
 
     // dataChanged.
     model.setHops({makeHop(1, 6), makeHop(2, 6)});
     QCOMPARE(sent->text(), QStringLiteral("6"));
 
-    // The hop leaves the table (rowsRemoved): the last values stay.
+    // The hop leaves the table (rowsRemoved): the comment says so, the last values stay.
     model.setHops({makeHop(1, 7)});
+    QCOMPARE(comment->text(), gone);
     QCOMPARE(sent->text(), QStringLiteral("6"));
     QCOMPARE(ip->text(), QStringLiteral("10.0.0.2"));
 
     // A row with the same TTL comes back (rowsInserted only).
     model.setHops({makeHop(1, 7), makeHop(2, 1)});
     QCOMPARE(sent->text(), QStringLiteral("1"));
+    QCOMPARE(comment->text(), alive);
+
+    // Start clears the table (rowsRemoved only).
+    model.clear();
+    QCOMPARE(comment->text(), gone);
+    QCOMPARE(sent->text(), QStringLiteral("1"));
+    QCOMPARE(ip->text(), QStringLiteral("10.0.0.2"));
 }
 
 void TestHopPropertiesDialog::lossOneDecimal_data()

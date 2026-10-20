@@ -337,7 +337,9 @@ Labels, mnemonics and button texts are verbatim upstream (`WinMTR.rc`).
   `Resolve names`, `Show IP next to hostname` and `Show route graph`, which apply immediately.
 - Host properties dialog: read-only and non-modal. Each double-click opens a new dialog, so
   more than one can be open. The dialog follows its hop by TTL through the `HopTableModel`
-  signals, also after Stop and Start. When no row has that TTL, it keeps the last values.
+  signals, also after Stop and Start. When no row has that TTL, the comment field shows
+  `This hop is not in the current trace.` The other fields and the graph keep the last
+  values. The table is empty after Start, and it removes the rows past the target.
   Below the statistics, a `HopGraphWidget` shows the hop history. §8 lists the deviations.
 - Host properties values: the times use `%.1f` ms, and `Jitter:` under `Worst:` shows
   `jitterMs()` (§3.3). `Loss (%):` shows the loss with one decimal. The dialog calculates
@@ -500,7 +502,9 @@ The times have no INT_MAX limit, unlike the integer columns of the text and HTML
     the loss with one decimal and the times with real tenths. Upstream has no jitter, and it
     shows the integer loss and times of the table (`%.1f` of an integer). The dialog also
     opens after Stop, on the rows that the table keeps. Upstream `OnDblclkList()` opens it
-    only while the state is `TRACING` (`WinMTRDialog.cpp:442`).
+    only while the state is `TRACING` (`WinMTRDialog.cpp:442`). When the trace has no hop
+    with the TTL of the dialog, the comment says so and the other values stay; the modal
+    dialog of upstream cannot stay open across Stop and Start.
 13. The route graph under the table and the `Show route graph` option are new; upstream has
     no graph.
 14. Ping size: 0 to 8192 bytes (`OptionsDialog.h`; the CLI check and the engine clamp use the
